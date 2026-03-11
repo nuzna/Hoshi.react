@@ -212,28 +212,27 @@ export function PostCard({
         </div>
       ) : null}
 
-      <div className="mb-3 flex flex-wrap items-center gap-2">
+      <div className="mb-3 flex flex-nowrap items-center gap-2 overflow-x-auto pb-1">
         <Button
           variant={likedByMe ? "default" : "outline"}
           size="sm"
           onClick={() => onToggleLike(post)}
           disabled={pendingLikePostId === post.id}
+          aria-label="いいね"
         >
           <Heart className={`size-4 ${likedByMe ? "fill-current" : ""}`} />
           {likeCount}
         </Button>
 
-        <Button variant="outline" size="sm" onClick={() => onStartReply(post)}>
+        <Button variant="outline" size="icon-sm" onClick={() => onStartReply(post)} aria-label="返信">
           <MessageCircleReply className="size-4" />
-          返信
         </Button>
 
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="outline" size="sm" disabled={pendingRepostPostId === post.id}>
+            <Button variant="outline" size="sm" disabled={pendingRepostPostId === post.id} aria-label="共有">
               <Repeat2 className="size-4" />
-              共有する
-              <span className="ml-1 text-xs text-muted-foreground">{repostCount}</span>
+              <span className="text-xs text-muted-foreground">{repostCount}</span>
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start">
@@ -251,9 +250,8 @@ export function PostCard({
 
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="outline" size="sm">
+            <Button variant="outline" size="icon-sm" aria-label="リアクション">
               <SmilePlus className="size-4" />
-              リアクション
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start" className="w-72 p-2">

@@ -9,6 +9,7 @@ import { LogOut, Send } from "lucide-react"
 import { AnimatePresence, motion } from "motion/react"
 
 import { ModeToggle } from "@/components/mode-toggle"
+import { MobileUserMenu } from "@/components/mobile-user-menu"
 import { NotificationBell } from "@/components/notification-bell"
 import { PostCard } from "@/components/post-card"
 import { Button } from "@/components/ui/button"
@@ -322,28 +323,34 @@ export default function Home() {
             <h1 className="text-xl font-semibold">タイムライン</h1>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1 sm:gap-2">
             {user ? <NotificationBell userId={user.id} /> : null}
-            <ModeToggle />
             {user ? (
               <>
-                {myProfile ? (
-                  <Button asChild variant="outline" size="sm">
-                    <Link href={`/user/${myProfile.username}`}>プロフィール</Link>
+                <div className="sm:hidden">
+                  <MobileUserMenu profileUsername={myProfile?.username ?? null} onSignOut={handleSignOut} />
+                </div>
+                <div className="hidden items-center gap-2 sm:flex">
+                  <ModeToggle />
+                  {myProfile ? (
+                    <Button asChild variant="outline" size="sm">
+                      <Link href={`/user/${myProfile.username}`}>プロフィール</Link>
+                    </Button>
+                  ) : null}
+                  <Button variant="outline" size="sm" onClick={handleSignOut}>
+                    <LogOut className="size-4" />
+                    <span>ログアウト</span>
                   </Button>
-                ) : null}
-                <Button variant="outline" size="sm" onClick={handleSignOut}>
-                  <LogOut className="size-4" />
-                  ログアウト
-                </Button>
+                </div>
               </>
             ) : (
               <>
+                <ModeToggle />
                 <Button asChild variant="outline" size="sm">
                   <Link href="/login">ログイン</Link>
                 </Button>
-                <Button asChild size="sm">
-                  <Link href="/signup">アカウントを作成</Link>
+                <Button asChild size="sm" className="hidden sm:inline-flex">
+                  <Link href="/signup">アカウント作成</Link>
                 </Button>
               </>
             )}
@@ -358,7 +365,7 @@ export default function Home() {
             </p>
           </div>
 
-          <div className="mb-4 rounded-2xl border border-border/80 bg-card/80 p-3 shadow-sm">
+          <div className="mb-4 hidden rounded-2xl border border-border/80 bg-card/80 p-3 shadow-sm sm:block">
             <Input
               value={searchQuery}
               onChange={(event) => setSearchQuery(event.target.value)}
@@ -373,7 +380,7 @@ export default function Home() {
           </div>
 
           {searchKeyword && matchedAchievementDefs.length > 0 ? (
-            <div className="mb-4 rounded-2xl border border-border/80 bg-card/80 p-3 shadow-sm">
+            <div className="mb-4 hidden rounded-2xl border border-border/80 bg-card/80 p-3 shadow-sm sm:block">
               <p className="mb-2 text-xs font-medium tracking-wide text-muted-foreground">一致した実績</p>
               <div className="grid gap-2 sm:grid-cols-2">
                 {matchedAchievementDefs.map((achievement) => (

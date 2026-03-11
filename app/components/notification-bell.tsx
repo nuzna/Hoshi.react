@@ -1,4 +1,4 @@
-"use client"
+﻿"use client"
 
 import Link from "next/link"
 import { useCallback, useEffect, useMemo, useState } from "react"
@@ -43,10 +43,10 @@ function formatCount(count: number) {
 }
 
 function renderMessage(item: NotificationItem) {
-  const actorName = item.actor?.display_name ?? item.actor?.username ?? "Someone"
-  if (item.type === "like") return `${actorName} liked your post`
-  if (item.type === "follow") return `${actorName} followed you`
-  return `${actorName} reacted to your post`
+  const actorName = item.actor?.display_name ?? item.actor?.username ?? "だれか"
+  if (item.type === "like") return `${actorName}さんがあなたの投稿にいいねしました`
+  if (item.type === "follow") return `${actorName}さんがあなたをフォローしました`
+  return `${actorName}さんがあなたの投稿にリアクションしました`
 }
 
 function linkFor(item: NotificationItem) {
@@ -163,7 +163,7 @@ export function NotificationBell({ userId }: NotificationBellProps) {
       <DropdownMenuTrigger asChild>
         <Button variant="outline" size="icon-sm" className="relative">
           <Bell className="size-4" />
-          <span className="sr-only">Notifications</span>
+          <span className="sr-only">通知</span>
           {unreadCount > 0 ? (
             <span className="absolute -right-1 -top-1 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-semibold text-primary-foreground">
               {formatCount(unreadCount)}
@@ -173,12 +173,12 @@ export function NotificationBell({ userId }: NotificationBellProps) {
       </DropdownMenuTrigger>
 
       <DropdownMenuContent align="end" className="w-80">
-        <DropdownMenuLabel>Notifications</DropdownMenuLabel>
+        <DropdownMenuLabel>通知</DropdownMenuLabel>
         <DropdownMenuSeparator />
         {errorMessage ? (
           <div className="px-2 py-2 text-xs text-destructive">{errorMessage}</div>
         ) : sorted.length === 0 ? (
-          <div className="px-2 py-6 text-center text-xs text-muted-foreground">No notifications</div>
+          <div className="px-2 py-6 text-center text-xs text-muted-foreground">通知はありません</div>
         ) : (
           sorted.map((item) => (
             <DropdownMenuItem key={item.id} asChild className="items-start py-2">

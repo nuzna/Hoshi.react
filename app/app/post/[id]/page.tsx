@@ -8,6 +8,7 @@ import type { User } from "@supabase/supabase-js"
 import { ArrowLeft, LogOut, Send } from "lucide-react"
 
 import { ModeToggle } from "@/components/mode-toggle"
+import { MobileUserMenu } from "@/components/mobile-user-menu"
 import { NotificationBell } from "@/components/notification-bell"
 import { PostCard } from "@/components/post-card"
 import { Button } from "@/components/ui/button"
@@ -332,18 +333,28 @@ function PostDetailContent() {
             <h1 className="text-lg font-semibold">投稿詳細</h1>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1 sm:gap-2">
             {user ? <NotificationBell userId={user.id} /> : null}
-            <ModeToggle />
             {user ? (
-              <Button variant="outline" size="sm" onClick={handleSignOut}>
-                <LogOut className="size-4" />
-                ログアウト
-              </Button>
+              <>
+                <div className="sm:hidden">
+                  <MobileUserMenu profileUsername={null} onSignOut={handleSignOut} />
+                </div>
+                <div className="hidden items-center gap-2 sm:flex">
+                  <ModeToggle />
+                  <Button variant="outline" size="sm" onClick={handleSignOut}>
+                    <LogOut className="size-4" />
+                    <span>ログアウト</span>
+                  </Button>
+                </div>
+              </>
             ) : (
-              <Button asChild variant="outline" size="sm">
-                <Link href="/login">ログイン</Link>
-              </Button>
+              <>
+                <ModeToggle />
+                <Button asChild variant="outline" size="sm">
+                  <Link href="/login">ログイン</Link>
+                </Button>
+              </>
             )}
           </div>
         </header>
