@@ -486,6 +486,9 @@ export type Database = {
           avatar_url: string | null
           bio: string
           created_at: string
+          discord_avatar_url: string | null
+          discord_id: string | null
+          discord_username: string | null
           display_name: string
           id: string
           likes_visibility: string
@@ -496,6 +499,9 @@ export type Database = {
           avatar_url?: string | null
           bio?: string
           created_at?: string
+          discord_avatar_url?: string | null
+          discord_id?: string | null
+          discord_username?: string | null
           display_name: string
           id: string
           likes_visibility?: string
@@ -506,6 +512,9 @@ export type Database = {
           avatar_url?: string | null
           bio?: string
           created_at?: string
+          discord_avatar_url?: string | null
+          discord_id?: string | null
+          discord_username?: string | null
           display_name?: string
           id?: string
           likes_visibility?: string
