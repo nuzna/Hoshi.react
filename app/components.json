@@ -19,5 +19,7 @@
     "lib": "@/lib",
     "hooks": "@/hooks"
   },
-  "registries": {}
+  "registries": {
+    "@skiper-ui": "https://skiper-ui.com/registry/{name}.json"
+  }
 }

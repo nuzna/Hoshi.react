@@ -14,34 +14,45 @@ export type ReactionLite = Pick<
   "emoji" | "user_id"
 >
 
+export type PostImageLite = Pick<
+  Database["public"]["Tables"]["post_images"]["Row"],
+  "id" | "url" | "mime_type" | "width" | "height" | "sort_order"
+>
+
 export type RepostSource = {
   id: string
   user_id: string
   content: string | null
+  has_media: boolean
   reply_to_id: string | null
   repost_of_id: string | null
   created_at: string
   profiles: ProfileLite | null
+  post_images?: PostImageLite[] | null
 }
 
 export type ReplySource = {
   id: string
   user_id: string
   content: string | null
+  has_media: boolean
   created_at: string
   profiles: ProfileLite | null
+  post_images?: PostImageLite[] | null
 }
 
 export type TimelinePost = {
   id: string
   user_id: string
   content: string | null
+  has_media: boolean
   reply_to_id: string | null
   repost_of_id: string | null
   created_at: string
   profiles: ProfileLite | null
   post_likes: LikeLite[] | null
   post_reactions: ReactionLite[] | null
+  post_images: PostImageLite[] | null
   reply_to?: ReplySource | ReplySource[] | null
   repost_of?: RepostSource | RepostSource[] | null
 }
@@ -50,6 +61,7 @@ export const POST_SELECT_QUERY = `
   id,
   user_id,
   content,
+  has_media,
   reply_to_id,
   repost_of_id,
   created_at,
@@ -65,6 +77,14 @@ export const POST_SELECT_QUERY = `
   post_reactions (
     user_id,
     emoji
+  ),
+  post_images (
+    id,
+    url,
+    mime_type,
+    width,
+    height,
+    sort_order
   )
 `
 
@@ -72,6 +92,7 @@ const POST_RELATION_SELECT_QUERY = `
   id,
   user_id,
   content,
+  has_media,
   reply_to_id,
   repost_of_id,
   created_at,
@@ -80,6 +101,14 @@ const POST_RELATION_SELECT_QUERY = `
     username,
     display_name,
     avatar_url
+  ),
+  post_images (
+    id,
+    url,
+    mime_type,
+    width,
+    height,
+    sort_order
   )
 `
 

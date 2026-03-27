@@ -1,4 +1,4 @@
-export type Json =
+﻿export type Json =
   | string
   | number
   | boolean
@@ -357,6 +357,7 @@ export type Database = {
         Row: {
           content: string | null
           created_at: string
+          has_media: boolean
           id: string
           reply_to_id: string | null
           repost_of_id: string | null
@@ -366,6 +367,7 @@ export type Database = {
         Insert: {
           content?: string | null
           created_at?: string
+          has_media?: boolean
           id?: string
           reply_to_id?: string | null
           repost_of_id?: string | null
@@ -375,6 +377,7 @@ export type Database = {
         Update: {
           content?: string | null
           created_at?: string
+          has_media?: boolean
           id?: string
           reply_to_id?: string | null
           repost_of_id?: string | null
@@ -431,6 +434,53 @@ export type Database = {
           },
         ]
       }
+      post_images: {
+        Row: {
+          created_at: string
+          height: number | null
+          id: string
+          mime_type: string
+          post_id: string
+          size_bytes: number
+          sort_order: number
+          storage_key: string
+          url: string
+          width: number | null
+        }
+        Insert: {
+          created_at?: string
+          height?: number | null
+          id?: string
+          mime_type: string
+          post_id: string
+          size_bytes: number
+          sort_order?: number
+          storage_key: string
+          url: string
+          width?: number | null
+        }
+        Update: {
+          created_at?: string
+          height?: number | null
+          id?: string
+          mime_type?: string
+          post_id?: string
+          size_bytes?: number
+          sort_order?: number
+          storage_key?: string
+          url?: string
+          width?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "post_images_post_id_fkey"
+            columns: ["post_id"]
+            isOneToOne: false
+            referencedRelation: "posts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       profiles: {
         Row: {
           avatar_url: string | null
@@ -479,3 +529,5 @@ export type Database = {
     }
   }
 }
+
+

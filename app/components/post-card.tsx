@@ -1,5 +1,6 @@
 ﻿"use client"
 
+import Image from "next/image"
 import Link from "next/link"
 import { useState } from "react"
 
@@ -134,20 +135,32 @@ export function PostCard({
   const source = pickSingleRelation(post.repost_of)
   const isPureRepost = post.repost_of_id !== null && (post.content ?? "").trim() === ""
   const isOwner = currentUserId !== null && currentUserId === post.user_id
+  const postImages = [...(post.post_images ?? [])].sort((a, b) => a.sort_order - b.sort_order)
+  const sourceImages = [...(source?.post_images ?? [])].sort((a, b) => a.sort_order - b.sort_order)
 
   return (
-    <article className="rounded-2xl border border-border/80 bg-card/90 p-4 shadow-sm">
+    <article className="border-b border-border/80 px-3 py-4 transition-colors hover:bg-muted/20 sm:px-4">
       {isPureRepost ? (
-        <p className="mb-3 text-xs text-muted-foreground">
+        <p className="mb-2 text-xs text-muted-foreground">
           <span className="font-medium">{displayName}</span> がリポストしました
         </p>
       ) : null}
 
       <div className="mb-3 flex items-start justify-between gap-3">
-        <Link href={`/user/${username}`} className="flex items-center gap-2">
-          <div className="grid size-9 place-items-center rounded-full border border-border bg-muted/50 text-sm font-semibold">
-            {displayName.slice(0, 1).toUpperCase()}
-          </div>
+        <Link href={`/user/${username}`} className="flex items-center gap-3">
+          {post.profiles?.avatar_url ? (
+            <Image
+              src={post.profiles.avatar_url}
+              alt={`${displayName}のアイコン`}
+              width={40}
+              height={40}
+              className="size-10 rounded-full border border-border/70 object-cover"
+            />
+          ) : (
+            <div className="grid size-10 place-items-center rounded-full border border-border/70 bg-muted/40 text-sm font-semibold">
+              {displayName.slice(0, 1).toUpperCase()}
+            </div>
+          )}
           <div className="leading-tight">
             <p className="text-sm font-medium">{displayName}</p>
             <p className="text-xs text-muted-foreground">@{username}</p>
@@ -194,8 +207,22 @@ export function PostCard({
         <TwemojiText text={post.content} className="mb-4 text-sm leading-relaxed" emojiClassName="size-5" />
       ) : null}
 
+      {postImages.length > 0 ? (
+        <div className="mb-4 grid gap-2">
+          {postImages.map((image) => (
+            <img
+              key={image.id}
+              src={image.url}
+              alt="投稿画像"
+              loading="lazy"
+              className="max-h-[28rem] w-full rounded-2xl border border-border/70 bg-muted/20 object-cover"
+            />
+          ))}
+        </div>
+      ) : null}
+
       {post.repost_of_id && source ? (
-        <div className="mb-4 rounded-xl border border-border/70 bg-muted/30 p-3">
+        <div className="mb-4 rounded-2xl border border-border/70 bg-muted/25 p-3">
           <div className="mb-1 flex items-center justify-between gap-2 text-xs text-muted-foreground">
             <span>
               @{source.profiles?.username ?? "unknown-user"} / {source.profiles?.display_name ?? "名無し"} さんの投稿の引用
@@ -209,30 +236,50 @@ export function PostCard({
             className="text-xs leading-relaxed text-muted-foreground"
             emojiClassName="size-4"
           />
+          {sourceImages.length > 0 ? (
+            <div className="mt-2 grid gap-2">
+              {sourceImages.map((image) => (
+                <img
+                  key={image.id}
+                  src={image.url}
+                  alt="引用元の投稿画像"
+                  loading="lazy"
+                  className="max-h-60 w-full rounded-xl border border-border/60 bg-muted/20 object-cover"
+                />
+              ))}
+            </div>
+          ) : null}
         </div>
       ) : null}
 
-      <div className="mb-3 flex flex-nowrap items-center gap-2 overflow-x-auto pb-1">
+      <div className="mb-3 flex flex-nowrap items-center gap-1 overflow-x-auto pb-1">
         <Button
-          variant={likedByMe ? "default" : "outline"}
+          variant="ghost"
           size="sm"
           onClick={() => onToggleLike(post)}
           disabled={pendingLikePostId === post.id}
           aria-label="いいね"
+          className={likedByMe ? "text-foreground" : "text-muted-foreground"}
         >
           <Heart className={`size-4 ${likedByMe ? "fill-current" : ""}`} />
           {likeCount}
         </Button>
 
-        <Button variant="outline" size="icon-sm" onClick={() => onStartReply(post)} aria-label="返信">
+        <Button variant="ghost" size="icon-sm" onClick={() => onStartReply(post)} aria-label="返信" className="text-muted-foreground">
           <MessageCircleReply className="size-4" />
         </Button>
 
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="outline" size="sm" disabled={pendingRepostPostId === post.id} aria-label="共有">
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={pendingRepostPostId === post.id}
+              aria-label="共有"
+              className="text-muted-foreground"
+            >
               <Repeat2 className="size-4" />
-              <span className="text-xs text-muted-foreground">{repostCount}</span>
+              <span className="text-xs">{repostCount}</span>
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start">
@@ -250,7 +297,7 @@ export function PostCard({
 
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="outline" size="icon-sm" aria-label="リアクション">
+            <Button variant="ghost" size="icon-sm" aria-label="リアクション" className="text-muted-foreground">
               <SmilePlus className="size-4" />
             </Button>
           </DropdownMenuTrigger>
@@ -284,11 +331,11 @@ export function PostCard({
             return (
               <Button
                 key={emoji}
-                variant={active ? "default" : "outline"}
+                variant={active ? "secondary" : "ghost"}
                 size="sm"
                 onClick={() => onToggleReaction(post, emoji)}
                 disabled={pendingReactionKey === reactionKey}
-                className="gap-1.5"
+                className="gap-1.5 rounded-full"
               >
                 <TwemojiEmoji emoji={emoji} className="size-4" />
                 <span>{count}</span>

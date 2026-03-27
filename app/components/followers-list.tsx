@@ -1,5 +1,6 @@
 "use client"
 
+import Image from "next/image"
 import Link from "next/link"
 
 import { ScrollArea } from "@/components/ui/scroll-area"
@@ -30,9 +31,19 @@ export function FollowersList({ users, emptyText }: FollowersListProps) {
             href={`/user/${target.username}`}
             className="flex items-center gap-3 rounded-xl border border-border/70 bg-muted/30 p-3 transition hover:bg-muted/60"
           >
-            <div className="grid size-9 place-items-center rounded-full border border-border bg-background text-sm font-semibold">
-              {target.display_name.slice(0, 1).toUpperCase()}
-            </div>
+            {target.avatar_url ? (
+              <Image
+                src={target.avatar_url}
+                alt={`${target.display_name}のアイコン`}
+                width={36}
+                height={36}
+                className="size-9 rounded-full border border-border object-cover"
+              />
+            ) : (
+              <div className="grid size-9 place-items-center rounded-full border border-border bg-background text-sm font-semibold">
+                {target.display_name.slice(0, 1).toUpperCase()}
+              </div>
+            )}
             <div>
               <p className="text-sm font-medium">{target.display_name}</p>
               <p className="text-xs text-muted-foreground">@{target.username}</p>

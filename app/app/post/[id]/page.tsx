@@ -1,11 +1,11 @@
-"use client"
+﻿"use client"
 
 import Link from "next/link"
 import { useParams, useRouter } from "next/navigation"
-import { Suspense, useCallback, useEffect, useState } from "react"
+import { Suspense, useCallback, useEffect, useRef, useState, type ChangeEvent } from "react"
 
 import type { User } from "@supabase/supabase-js"
-import { ArrowLeft, LogOut, Send } from "lucide-react"
+import { ArrowLeft, ImagePlus, LogOut, Send, X } from "lucide-react"
 
 import { ModeToggle } from "@/components/mode-toggle"
 import { MobileUserMenu } from "@/components/mobile-user-menu"
@@ -13,7 +13,15 @@ import { NotificationBell } from "@/components/notification-bell"
 import { PostCard } from "@/components/post-card"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
+import { Textarea } from "@/components/ui/textarea"
+import { deletePostWithMedia } from "@/lib/post-delete"
+import {
+  preparePostImageSelection,
+  revokePendingPostImages,
+  type PendingPostImage,
+} from "@/lib/post-image"
 import { hydratePostsRelations, POST_SELECT_QUERY, type TimelinePost } from "@/lib/post-types"
+import { uploadPostImagesToB2 } from "@/lib/post-upload"
 import { getSupabaseBrowserClient } from "@/lib/supabase/client"
 
 function PostDetailContent() {
@@ -28,6 +36,7 @@ function PostDetailContent() {
   const [replyRepostCounts, setReplyRepostCounts] = useState<Record<string, number>>({})
   const [isLoading, setIsLoading] = useState(true)
   const [composerText, setComposerText] = useState("")
+  const [composerImages, setComposerImages] = useState<PendingPostImage[]>([])
   const [quoteTarget, setQuoteTarget] = useState<TimelinePost | null>(null)
   const [replyTarget, setReplyTarget] = useState<TimelinePost | null>(null)
   const [isPosting, setIsPosting] = useState(false)
@@ -35,6 +44,7 @@ function PostDetailContent() {
   const [pendingRepostPostId, setPendingRepostPostId] = useState<string | null>(null)
   const [pendingReactionKey, setPendingReactionKey] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
+  const composerFileInputRef = useRef<HTMLInputElement | null>(null)
 
   const fetchPost = useCallback(async () => {
     if (!postId) return
@@ -141,6 +151,9 @@ function PostDetailContent() {
       .on("postgres_changes", { event: "*", schema: "public", table: "posts" }, () => {
         void Promise.all([fetchPost(), fetchReplies()])
       })
+      .on("postgres_changes", { event: "*", schema: "public", table: "post_images" }, () => {
+        void Promise.all([fetchPost(), fetchReplies()])
+      })
       .on("postgres_changes", { event: "*", schema: "public", table: "post_likes" }, () => {
         void Promise.all([fetchPost(), fetchReplies()])
       })
@@ -158,8 +171,47 @@ function PostDetailContent() {
     }
   }, [fetchPost, fetchReplies, postId])
 
+  useEffect(() => {
+    return () => {
+      revokePendingPostImages(composerImages)
+    }
+  }, [composerImages])
+
   const requireLogin = () => {
     router.push("/login")
+  }
+
+  const resetComposerMedia = () => {
+    revokePendingPostImages(composerImages)
+    setComposerImages([])
+    if (composerFileInputRef.current) {
+      composerFileInputRef.current.value = ""
+    }
+  }
+
+  const handleComposerImageSelect = async (event: ChangeEvent<HTMLInputElement>) => {
+    const selectedFiles = event.target.files
+    if (!selectedFiles?.length) return
+
+    try {
+      const prepared = await preparePostImageSelection(selectedFiles, composerImages.length)
+      setComposerImages((current) => [...current, ...prepared])
+      setMessage(null)
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "画像の準備に失敗しました。")
+    } finally {
+      event.target.value = ""
+    }
+  }
+
+  const handleRemoveComposerImage = (index: number) => {
+    setComposerImages((current) => {
+      const target = current[index]
+      if (target) {
+        revokePendingPostImages([target])
+      }
+      return current.filter((_, currentIndex) => currentIndex !== index)
+    })
   }
 
   const handleCreateQuote = async () => {
@@ -170,8 +222,9 @@ function PostDetailContent() {
     if (!quoteTarget && !replyTarget) return
 
     const content = composerText.trim()
-    if (!content) {
-      setMessage("引用・返信には本文の入力が必要です。")
+    const hasImages = composerImages.length > 0
+    if (!content && !hasImages) {
+      setMessage("引用や返信には本文または画像が必要です。")
       return
     }
 
@@ -180,20 +233,51 @@ function PostDetailContent() {
 
     const supabase = getSupabaseBrowserClient()
     const payload = quoteTarget
-      ? { user_id: user.id, content, repost_of_id: quoteTarget.id }
-      : { user_id: user.id, content, reply_to_id: replyTarget?.id ?? null }
+      ? { user_id: user.id, content: content || null, repost_of_id: quoteTarget.id, has_media: hasImages }
+      : { user_id: user.id, content: content || null, reply_to_id: replyTarget?.id ?? null, has_media: hasImages }
 
-    const { error } = await supabase.from("posts").insert(payload)
-
-    setIsPosting(false)
+    const { data: createdPost, error } = await supabase.from("posts").insert(payload).select("id").single()
     if (error) {
+      setIsPosting(false)
       setMessage(error.message)
       return
     }
 
+    if (createdPost && hasImages) {
+      try {
+        const uploadedImages = await uploadPostImagesToB2(composerImages)
+        const { error: imageInsertError } = await supabase.from("post_images").insert(
+          uploadedImages.map((image) => ({
+            post_id: createdPost.id,
+            url: image.url,
+            storage_key: image.fileName,
+            mime_type: image.mimeType,
+            size_bytes: image.sizeBytes,
+            width: image.width,
+            height: image.height,
+            sort_order: image.sortOrder,
+          })),
+        )
+
+        if (imageInsertError) {
+          await supabase.from("posts").delete().eq("id", createdPost.id).eq("user_id", user.id)
+          setIsPosting(false)
+          setMessage(imageInsertError.message)
+          return
+        }
+      } catch (uploadError) {
+        await supabase.from("posts").delete().eq("id", createdPost.id).eq("user_id", user.id)
+        setIsPosting(false)
+        setMessage(uploadError instanceof Error ? uploadError.message : "画像アップロードに失敗しました。")
+        return
+      }
+    }
+
+    setIsPosting(false)
     setComposerText("")
     setQuoteTarget(null)
     setReplyTarget(null)
+    resetComposerMedia()
   }
 
   const handleToggleLike = async (targetPost: TimelinePost) => {
@@ -284,9 +368,11 @@ function PostDetailContent() {
   const handleDeletePost = async (targetPost: TimelinePost) => {
     if (!user || targetPost.user_id !== user.id) return
 
-    const supabase = getSupabaseBrowserClient()
-    const { error } = await supabase.from("posts").delete().eq("id", targetPost.id).eq("user_id", user.id)
-    if (error) setMessage(error.message)
+    try {
+      await deletePostWithMedia(targetPost.id)
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "投稿削除に失敗しました。")
+    }
   }
 
   const handleReportPost = async (targetPost: TimelinePost, category: string, reason: string) => {
@@ -308,7 +394,7 @@ function PostDetailContent() {
       setMessage(error.message)
       return
     }
-    setMessage("報告しました。ご協力ありがとうございます。")
+    setMessage("通報しました。ご協力ありがとうございます。")
   }
 
   const handleSignOut = async () => {
@@ -448,29 +534,78 @@ function PostDetailContent() {
             </section>
 
             {quoteTarget || replyTarget ? (
-              <section className="rounded-2xl border border-border/80 bg-card/90 p-4">
+              <section className="rounded-3xl border border-border/80 bg-background px-3 py-3">
                 <p className="mb-2 text-sm font-medium">{quoteTarget ? "この投稿を引用" : "この投稿に返信"}</p>
-                <textarea
+                {composerImages.length > 0 ? (
+                  <div className="mb-2 flex gap-2 overflow-x-auto pb-1">
+                    {composerImages.map((image, index) => (
+                      <div key={`${image.file.name}-${index}`} className="relative shrink-0">
+                        <img
+                          src={image.previewUrl}
+                          alt="投稿画像のプレビュー"
+                          className="size-16 rounded-2xl border border-border/80 object-cover"
+                        />
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          size="icon-xs"
+                          className="absolute -right-1 -top-1 rounded-full"
+                          onClick={() => handleRemoveComposerImage(index)}
+                          aria-label="画像を削除"
+                        >
+                          <X className="size-3" />
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+                <div className="flex items-center gap-2">
+                  <input
+                    ref={composerFileInputRef}
+                    type="file"
+                    accept="image/png,image/jpeg,image/webp,image/gif"
+                    multiple
+                    className="hidden"
+                    onChange={handleComposerImageSelect}
+                  />
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    className="shrink-0 rounded-full"
+                    onClick={() => composerFileInputRef.current?.click()}
+                    aria-label="画像を追加"
+                  >
+                    <ImagePlus className="size-4" />
+                  </Button>
+                </div>
+                <Textarea
                   value={composerText}
                   onChange={(event) => setComposerText(event.target.value)}
                   maxLength={500}
-                  placeholder={quoteTarget ? "引用コメントを書く" : "返信を書く"}
-                  className="min-h-24 w-full resize-none rounded-xl border border-border/80 bg-background/80 px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+                  placeholder={quoteTarget ? "引用を書く" : "返信を書く"}
+                  className="min-h-0 rounded-3xl border-border/80 bg-muted/35 px-3 py-2 shadow-none focus-visible:ring-0"
                 />
                 <div className="mt-2 flex justify-end gap-2">
                   <Button
-                    variant="outline"
+                    variant="ghost"
                     size="sm"
                     onClick={() => {
                       setQuoteTarget(null)
                       setReplyTarget(null)
+                      resetComposerMedia()
                     }}
                   >
                     キャンセル
                   </Button>
-                  <Button size="sm" onClick={handleCreateQuote} disabled={!user || isPosting}>
+                  <Button
+                    size="icon-lg"
+                    onClick={handleCreateQuote}
+                    disabled={!user || isPosting || (composerText.trim().length === 0 && composerImages.length === 0)}
+                    className="rounded-full"
+                  >
                     <Send className="size-4" />
-                    {isPosting ? "投稿中..." : quoteTarget ? "引用投稿" : "返信"}
+                    <span className="sr-only">{isPosting ? "投稿中" : "投稿"}</span>
                   </Button>
                 </div>
               </section>
@@ -495,3 +630,4 @@ export default function PostDetailPage() {
     </Suspense>
   )
 }
+

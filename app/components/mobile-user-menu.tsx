@@ -26,7 +26,7 @@ export function MobileUserMenu({ profileUsername, onSignOut }: MobileUserMenuPro
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="outline" size="icon-sm" aria-label="ユーザーメニュー">
+        <Button variant="ghost" size="icon-sm" aria-label="ユーザーメニュー">
           <Menu className="size-4" />
         </Button>
       </DropdownMenuTrigger>

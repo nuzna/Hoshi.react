@@ -161,7 +161,7 @@ export function NotificationBell({ userId }: NotificationBellProps) {
   return (
     <DropdownMenu open={open} onOpenChange={handleOpenChange}>
       <DropdownMenuTrigger asChild>
-        <Button variant="outline" size="icon-sm" className="relative">
+        <Button variant="ghost" size="icon-sm" className="relative">
           <Bell className="size-4" />
           <span className="sr-only">通知</span>
           {unreadCount > 0 ? (
