@@ -100,6 +100,97 @@ export type Database = {
           },
         ]
       }
+      apex_connections: {
+        Row: {
+          created_at: string
+          platform: string
+          player_name: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          platform: string
+          player_name: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          platform?: string
+          player_name?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "apex_connections_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: true
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      apex_profile_cache: {
+        Row: {
+          avatar_url: string | null
+          damage: number | null
+          kills: number | null
+          level: number | null
+          platform: string
+          player_name: string
+          rank_icon_url: string | null
+          rank_name: string | null
+          rank_score: number | null
+          selected_legend: string | null
+          selected_legend_image_url: string | null
+          tracker_url: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          avatar_url?: string | null
+          damage?: number | null
+          kills?: number | null
+          level?: number | null
+          platform: string
+          player_name: string
+          rank_icon_url?: string | null
+          rank_name?: string | null
+          rank_score?: number | null
+          selected_legend?: string | null
+          selected_legend_image_url?: string | null
+          tracker_url?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          avatar_url?: string | null
+          damage?: number | null
+          kills?: number | null
+          level?: number | null
+          platform?: string
+          player_name?: string
+          rank_icon_url?: string | null
+          rank_name?: string | null
+          rank_score?: number | null
+          selected_legend?: string | null
+          selected_legend_image_url?: string | null
+          tracker_url?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "apex_profile_cache_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: true
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       announcements: {
         Row: {
           content_md: string
@@ -676,106 +767,6 @@ export type Database = {
           username?: string
         }
         Relationships: []
-      }
-      spotify_connections: {
-        Row: {
-          access_token: string
-          access_token_expires_at: string
-          created_at: string
-          refresh_token: string
-          scopes: string
-          spotify_avatar_url: string | null
-          spotify_display_name: string | null
-          spotify_user_id: string
-          updated_at: string
-          user_id: string
-        }
-        Insert: {
-          access_token: string
-          access_token_expires_at: string
-          created_at?: string
-          refresh_token: string
-          scopes?: string
-          spotify_avatar_url?: string | null
-          spotify_display_name?: string | null
-          spotify_user_id: string
-          updated_at?: string
-          user_id: string
-        }
-        Update: {
-          access_token?: string
-          access_token_expires_at?: string
-          created_at?: string
-          refresh_token?: string
-          scopes?: string
-          spotify_avatar_url?: string | null
-          spotify_display_name?: string | null
-          spotify_user_id?: string
-          updated_at?: string
-          user_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "spotify_connections_user_id_fkey"
-            columns: ["user_id"]
-            isOneToOne: true
-            referencedRelation: "profiles"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      spotify_presence_cache: {
-        Row: {
-          album_image_url: string | null
-          album_name: string | null
-          artist_name: string | null
-          is_connected: boolean
-          is_playing: boolean
-          played_at: string | null
-          spotify_avatar_url: string | null
-          spotify_display_name: string | null
-          track_name: string | null
-          track_url: string | null
-          updated_at: string
-          user_id: string
-        }
-        Insert: {
-          album_image_url?: string | null
-          album_name?: string | null
-          artist_name?: string | null
-          is_connected?: boolean
-          is_playing?: boolean
-          played_at?: string | null
-          spotify_avatar_url?: string | null
-          spotify_display_name?: string | null
-          track_name?: string | null
-          track_url?: string | null
-          updated_at?: string
-          user_id: string
-        }
-        Update: {
-          album_image_url?: string | null
-          album_name?: string | null
-          artist_name?: string | null
-          is_connected?: boolean
-          is_playing?: boolean
-          played_at?: string | null
-          spotify_avatar_url?: string | null
-          spotify_display_name?: string | null
-          track_name?: string | null
-          track_url?: string | null
-          updated_at?: string
-          user_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "spotify_presence_cache_user_id_fkey"
-            columns: ["user_id"]
-            isOneToOne: true
-            referencedRelation: "profiles"
-            referencedColumns: ["id"]
-          },
-        ]
       }
       user_moderation: {
         Row: {

@@ -977,63 +977,137 @@ for delete
 to authenticated
 using (auth.uid() = follower_id and public.can_user_interact(auth.uid()));
 
--- Spotify connection support.
-create table if not exists public.spotify_connections (
+-- Spotify integration was removed from the application.
+drop policy if exists "spotify_connections_select_own" on public.spotify_connections;
+drop policy if exists "spotify_presence_cache_select_public" on public.spotify_presence_cache;
+
+drop trigger if exists trg_spotify_connections_set_updated_at on public.spotify_connections;
+drop trigger if exists trg_spotify_presence_cache_set_updated_at on public.spotify_presence_cache;
+
+drop table if exists public.spotify_presence_cache;
+drop table if exists public.spotify_connections;
+
+-- Apex Legends widget support via Tracker Network API.
+create table if not exists public.apex_connections (
   user_id uuid primary key references public.profiles (id) on delete cascade,
-  spotify_user_id text not null,
-  spotify_display_name text,
-  spotify_avatar_url text,
-  access_token text not null,
-  refresh_token text not null,
-  scopes text not null default '',
-  access_token_expires_at timestamptz not null,
+  platform text not null,
+  player_name text not null,
   created_at timestamptz not null default timezone('utc', now()),
   updated_at timestamptz not null default timezone('utc', now())
 );
 
-create table if not exists public.spotify_presence_cache (
+create table if not exists public.apex_profile_cache (
   user_id uuid primary key references public.profiles (id) on delete cascade,
-  spotify_display_name text,
-  spotify_avatar_url text,
-  is_connected boolean not null default false,
-  is_playing boolean not null default false,
-  track_name text,
-  artist_name text,
-  album_name text,
-  album_image_url text,
-  track_url text,
-  played_at timestamptz,
+  platform text not null,
+  player_name text not null,
+  tracker_url text,
+  avatar_url text,
+  level integer,
+  rank_name text,
+  rank_score integer,
+  rank_icon_url text,
+  selected_legend text,
+  selected_legend_image_url text,
+  kills integer,
+  damage integer,
   updated_at timestamptz not null default timezone('utc', now())
 );
 
-create unique index if not exists spotify_connections_spotify_user_id_key
-on public.spotify_connections (spotify_user_id);
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'apex_connections_platform_check'
+      and conrelid = 'public.apex_connections'::regclass
+  ) then
+    alter table public.apex_connections
+      add constraint apex_connections_platform_check
+      check (platform in ('origin', 'psn', 'xbl'));
+  end if;
 
-drop trigger if exists trg_spotify_connections_set_updated_at on public.spotify_connections;
-create trigger trg_spotify_connections_set_updated_at
-before update on public.spotify_connections
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'apex_profile_cache_platform_check'
+      and conrelid = 'public.apex_profile_cache'::regclass
+  ) then
+    alter table public.apex_profile_cache
+      add constraint apex_profile_cache_platform_check
+      check (platform in ('origin', 'psn', 'xbl'));
+  end if;
+end
+$$;
+
+drop trigger if exists trg_apex_connections_set_updated_at on public.apex_connections;
+create trigger trg_apex_connections_set_updated_at
+before update on public.apex_connections
 for each row execute function public.set_updated_at();
 
-drop trigger if exists trg_spotify_presence_cache_set_updated_at on public.spotify_presence_cache;
-create trigger trg_spotify_presence_cache_set_updated_at
-before update on public.spotify_presence_cache
+drop trigger if exists trg_apex_profile_cache_set_updated_at on public.apex_profile_cache;
+create trigger trg_apex_profile_cache_set_updated_at
+before update on public.apex_profile_cache
 for each row execute function public.set_updated_at();
 
-alter table public.spotify_connections enable row level security;
-alter table public.spotify_presence_cache enable row level security;
+alter table public.apex_connections enable row level security;
+alter table public.apex_profile_cache enable row level security;
 
-drop policy if exists "spotify_connections_select_own" on public.spotify_connections;
-create policy "spotify_connections_select_own"
-on public.spotify_connections
+drop policy if exists "apex_connections_select_own" on public.apex_connections;
+create policy "apex_connections_select_own"
+on public.apex_connections
 for select
 to authenticated
 using (auth.uid() = user_id);
 
-drop policy if exists "spotify_presence_cache_select_public" on public.spotify_presence_cache;
-create policy "spotify_presence_cache_select_public"
-on public.spotify_presence_cache
+drop policy if exists "apex_connections_insert_own" on public.apex_connections;
+create policy "apex_connections_insert_own"
+on public.apex_connections
+for insert
+to authenticated
+with check (auth.uid() = user_id);
+
+drop policy if exists "apex_connections_update_own" on public.apex_connections;
+create policy "apex_connections_update_own"
+on public.apex_connections
+for update
+to authenticated
+using (auth.uid() = user_id)
+with check (auth.uid() = user_id);
+
+drop policy if exists "apex_connections_delete_own" on public.apex_connections;
+create policy "apex_connections_delete_own"
+on public.apex_connections
+for delete
+to authenticated
+using (auth.uid() = user_id);
+
+drop policy if exists "apex_profile_cache_select_public" on public.apex_profile_cache;
+create policy "apex_profile_cache_select_public"
+on public.apex_profile_cache
 for select
-using (is_connected = true);
+using (true);
+
+drop policy if exists "apex_profile_cache_insert_own" on public.apex_profile_cache;
+create policy "apex_profile_cache_insert_own"
+on public.apex_profile_cache
+for insert
+to authenticated
+with check (auth.uid() = user_id);
+
+drop policy if exists "apex_profile_cache_update_own" on public.apex_profile_cache;
+create policy "apex_profile_cache_update_own"
+on public.apex_profile_cache
+for update
+to authenticated
+using (auth.uid() = user_id)
+with check (auth.uid() = user_id);
+
+drop policy if exists "apex_profile_cache_delete_own" on public.apex_profile_cache;
+create policy "apex_profile_cache_delete_own"
+on public.apex_profile_cache
+for delete
+to authenticated
+using (auth.uid() = user_id);
 
 do $$
 begin
@@ -1047,14 +1121,24 @@ begin
     alter publication supabase_realtime add table public.announcements;
   end if;
 
-  if not exists (
+  if exists (
     select 1
     from pg_publication_tables
     where pubname = 'supabase_realtime'
       and schemaname = 'public'
       and tablename = 'spotify_presence_cache'
   ) then
-    alter publication supabase_realtime add table public.spotify_presence_cache;
+    alter publication supabase_realtime drop table public.spotify_presence_cache;
+  end if;
+
+  if not exists (
+    select 1
+    from pg_publication_tables
+    where pubname = 'supabase_realtime'
+      and schemaname = 'public'
+      and tablename = 'apex_profile_cache'
+  ) then
+    alter publication supabase_realtime add table public.apex_profile_cache;
   end if;
 end
 $$;

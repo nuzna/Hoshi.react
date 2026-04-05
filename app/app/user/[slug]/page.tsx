@@ -30,13 +30,13 @@ import { AnimatePresence, motion } from "motion/react";
 import { AdminNavButton } from "@/components/admin-nav-button";
 import { AnnouncementDialog } from "@/components/announcement-dialog";
 import { ModeToggle } from "@/components/mode-toggle";
+import { ApexWidget } from "@/components/apex-widget";
 import { AppMessageBanner, createErrorMessage, createSuccessMessage, type AppMessage } from "@/components/app-message";
 import { MobileBottomNav } from "@/components/mobile-bottom-nav";
 import { MobileUserMenu } from "@/components/mobile-user-menu";
 import { NotificationBell } from "@/components/notification-bell";
 import { PostCard } from "@/components/post-card";
 import { ProfileDisplayName } from "@/components/profile-display-name";
-import { SpotifyWidget } from "@/components/spotify-widget";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -130,7 +130,7 @@ function UserPageContent() {
   const [editLikesVisibility, setEditLikesVisibility] = useState<"public" | "private">("public");
   const [isEditProfileOpen, setIsEditProfileOpen] = useState(false);
   const [profileFrozenUntil, setProfileFrozenUntil] = useState<string | null>(null);
-  const [spotifyPresence, setSpotifyPresence] = useState<Database["public"]["Tables"]["spotify_presence_cache"]["Row"] | null>(null);
+  const [apexProfile, setApexProfile] = useState<Database["public"]["Tables"]["apex_profile_cache"]["Row"] | null>(null);
 
   const [composerText, setComposerText] = useState("");
   const [composerImages, setComposerImages] = useState<PendingPostImage[]>([]);
@@ -176,6 +176,7 @@ function UserPageContent() {
       if (error) {
         setMessage(createErrorMessage(error));
         setProfile(null);
+        setApexProfile(null);
         setPosts([]);
         setLikedPosts([]);
         setAchievements([]);
@@ -185,6 +186,7 @@ function UserPageContent() {
 
       if (!data) {
         setProfile(null);
+        setApexProfile(null);
         setPosts([]);
         setLikedPosts([]);
         setAchievements([]);
@@ -217,12 +219,12 @@ function UserPageContent() {
         setProfileFrozenUntil(moderationStatus?.[0]?.frozen_until ?? null);
       }
 
-      const { data: spotifyPresenceData } = await supabase
-        .from("spotify_presence_cache")
+      const { data: apexProfileData } = await supabase
+        .from("apex_profile_cache")
         .select("*")
         .eq("user_id", typedProfile.id)
         .maybeSingle();
-      setSpotifyPresence((spotifyPresenceData ?? null) as Database["public"]["Tables"]["spotify_presence_cache"]["Row"] | null);
+      setApexProfile((apexProfileData ?? null) as Database["public"]["Tables"]["apex_profile_cache"]["Row"] | null);
 
       const { data: postsData, error: postsError } = await supabase
         .from("posts")
@@ -496,21 +498,21 @@ function UserPageContent() {
       )
       .on(
         "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "apex_profile_cache",
+          filter: `user_id=eq.${profileId}`,
+        },
+        () => void fetchProfileAndPosts(false, user?.id ?? null),
+      )
+      .on(
+        "postgres_changes",
         { event: "*", schema: "public", table: "blocks" },
         () => {
           void fetchBlockState();
           void fetchProfileAndPosts(false, user?.id ?? null);
         },
-      )
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "spotify_presence_cache",
-          filter: `user_id=eq.${profileId}`,
-        },
-        () => void fetchProfileAndPosts(false, user?.id ?? null),
       )
       ;
 
@@ -1129,9 +1131,9 @@ function UserPageContent() {
                 text={profile.bio || "まだ自己紹介はありません。"}
                 className="text-sm text-muted-foreground"
               />
-              {spotifyPresence ? (
+              {apexProfile ? (
                 <div className="mt-4">
-                  <SpotifyWidget presence={spotifyPresence} />
+                  <ApexWidget profile={apexProfile} />
                 </div>
               ) : null}
               <p className="mt-3 text-xs text-muted-foreground">

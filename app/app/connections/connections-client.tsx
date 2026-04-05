@@ -1,13 +1,13 @@
-﻿"use client"
+"use client"
 
 import Image from "next/image"
 import Link from "next/link"
 import { useEffect, useState } from "react"
-import { useRouter, useSearchParams } from "next/navigation"
 
 import type { User } from "@supabase/supabase-js"
-import { ArrowLeft, Link2, LogOut, RefreshCw, Unplug } from "lucide-react"
+import { ArrowLeft, LogOut, RefreshCw, Unplug } from "lucide-react"
 
+import { ApexWidget } from "@/components/apex-widget"
 import {
   AppMessageBanner,
   createErrorMessage,
@@ -18,8 +18,9 @@ import {
 import { MobileBottomNav } from "@/components/mobile-bottom-nav"
 import { ModeToggle } from "@/components/mode-toggle"
 import { MobileUserMenu } from "@/components/mobile-user-menu"
-import { SpotifyWidget } from "@/components/spotify-widget"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { getSupabaseBrowserClient } from "@/lib/supabase/client"
 import type { Database } from "@/lib/supabase/types"
 
@@ -28,53 +29,28 @@ type ConnectionProfile = Pick<
   "id" | "username" | "display_name" | "avatar_url" | "discord_id" | "discord_username" | "discord_avatar_url"
 >
 
-type SpotifyConnection = Database["public"]["Tables"]["spotify_connections"]["Row"]
-type SpotifyPresence = Database["public"]["Tables"]["spotify_presence_cache"]["Row"]
+type ApexConnection = Database["public"]["Tables"]["apex_connections"]["Row"]
+type ApexProfileCache = Database["public"]["Tables"]["apex_profile_cache"]["Row"]
 
-function getSpotifyAuthUrl() {
-  const clientId = process.env.NEXT_PUBLIC_SPOTIFY_CLIENT_ID
-  const redirectUri = process.env.NEXT_PUBLIC_SPOTIFY_REDIRECT_URI
-
-  if (!clientId) {
-    throw new Error("NEXT_PUBLIC_SPOTIFY_CLIENT_ID が設定されていません。")
-  }
-
-  if (!redirectUri) {
-    throw new Error("NEXT_PUBLIC_SPOTIFY_REDIRECT_URI が設定されていません。")
-  }
-
-  const params = new URLSearchParams({
-    client_id: clientId,
-    response_type: "code",
-    redirect_uri: redirectUri,
-    scope: "user-read-currently-playing user-read-recently-played",
-    state: "/connections",
-    show_dialog: "true",
-  })
-
-  return `https://accounts.spotify.com/authorize?${params.toString()}`
+const apexPlatformLabels: Record<"origin" | "psn" | "xbl", string> = {
+  origin: "PC / EA",
+  psn: "PlayStation",
+  xbl: "Xbox",
 }
 
 export function ConnectionsClient() {
-  const router = useRouter()
-  const searchParams = useSearchParams()
   const [user, setUser] = useState<User | null>(null)
   const [profile, setProfile] = useState<ConnectionProfile | null>(null)
-  const [spotifyConnection, setSpotifyConnection] = useState<SpotifyConnection | null>(null)
-  const [spotifyPresence, setSpotifyPresence] = useState<SpotifyPresence | null>(null)
-  const [message, setMessage] = useState<AppMessage | null>(() =>
-    searchParams.get("spotify") === "connected" ? createSuccessMessage("Spotify を接続しました。") : null,
-  )
+  const [message, setMessage] = useState<AppMessage | null>(null)
   const [isLoading, setIsLoading] = useState(true)
-  const [isSyncingSpotify, setIsSyncingSpotify] = useState(false)
-  const [isDisconnectingSpotify, setIsDisconnectingSpotify] = useState(false)
+  const [isAdmin, setIsAdmin] = useState(false)
   const [isDisconnectingDiscord, setIsDisconnectingDiscord] = useState(false)
-
-  useEffect(() => {
-    if (searchParams.get("spotify") === "connected") {
-      router.replace("/connections")
-    }
-  }, [router, searchParams])
+  const [apexConnection, setApexConnection] = useState<ApexConnection | null>(null)
+  const [apexProfile, setApexProfile] = useState<ApexProfileCache | null>(null)
+  const [apexPlatform, setApexPlatform] = useState<"origin" | "psn" | "xbl">("origin")
+  const [apexPlayerName, setApexPlayerName] = useState("")
+  const [isSyncingApex, setIsSyncingApex] = useState(false)
+  const [isDisconnectingApex, setIsDisconnectingApex] = useState(false)
 
   useEffect(() => {
     const supabase = getSupabaseBrowserClient()
@@ -82,30 +58,33 @@ export function ConnectionsClient() {
     const fetchData = async (authUser: User | null) => {
       if (!authUser) {
         setProfile(null)
-        setSpotifyConnection(null)
-        setSpotifyPresence(null)
+        setApexConnection(null)
+        setApexProfile(null)
+        setIsAdmin(false)
         setIsLoading(false)
         return
       }
 
       setIsLoading(true)
 
-      const [profileResult, spotifyResult, presenceResult] = await Promise.all([
+      const [profileResult, adminResult, apexConnectionResult, apexProfileResult] = await Promise.all([
         supabase
           .from("profiles")
           .select("id, username, display_name, avatar_url, discord_id, discord_username, discord_avatar_url")
           .eq("id", authUser.id)
           .maybeSingle(),
-        supabase.from("spotify_connections").select("*").eq("user_id", authUser.id).maybeSingle(),
-        supabase.from("spotify_presence_cache").select("*").eq("user_id", authUser.id).maybeSingle(),
+        supabase.rpc("is_current_user_admin"),
+        supabase.from("apex_connections").select("*").eq("user_id", authUser.id).maybeSingle(),
+        supabase.from("apex_profile_cache").select("*").eq("user_id", authUser.id).maybeSingle(),
       ])
 
-      if (profileResult.error || spotifyResult.error || presenceResult.error) {
+      if (profileResult.error || adminResult.error || apexConnectionResult.error || apexProfileResult.error) {
         setMessage(
           createErrorMessage(
             profileResult.error?.message ??
-              spotifyResult.error?.message ??
-              presenceResult.error?.message ??
+              adminResult.error?.message ??
+              apexConnectionResult.error?.message ??
+              apexProfileResult.error?.message ??
               "接続情報の読み込みに失敗しました。",
           ),
         )
@@ -113,9 +92,22 @@ export function ConnectionsClient() {
         return
       }
 
+      const nextApexConnection = (apexConnectionResult.data ?? null) as ApexConnection | null
+      const nextApexProfile = (apexProfileResult.data ?? null) as ApexProfileCache | null
+
       setProfile((profileResult.data ?? null) as ConnectionProfile | null)
-      setSpotifyConnection((spotifyResult.data ?? null) as SpotifyConnection | null)
-      setSpotifyPresence((presenceResult.data ?? null) as SpotifyPresence | null)
+      setIsAdmin(Boolean(adminResult.data))
+      setApexConnection(nextApexConnection)
+      setApexProfile(nextApexProfile)
+
+      if (nextApexConnection) {
+        setApexPlatform((nextApexConnection.platform as "origin" | "psn" | "xbl") ?? "origin")
+        setApexPlayerName(nextApexConnection.player_name)
+      } else {
+        setApexPlatform("origin")
+        setApexPlayerName("")
+      }
+
       setIsLoading(false)
     }
 
@@ -143,65 +135,79 @@ export function ConnectionsClient() {
     return data.session?.access_token ?? null
   }
 
-  const handleConnectSpotify = () => {
-    try {
-      window.location.assign(getSpotifyAuthUrl())
-    } catch (error) {
-      setMessage(createErrorMessage(error))
-    }
-  }
-
-  const handleSyncSpotify = async () => {
+  const handleSyncApex = async () => {
     const accessToken = await getSessionAccessToken()
     if (!accessToken) {
-      setMessage(createErrorMessage("Spotify を同期するにはログインが必要です。"))
+      setMessage(createErrorMessage("Apex を同期するにはログインが必要です。"))
       return
     }
 
-    setIsSyncingSpotify(true)
-    const response = await fetch("/api/connections/spotify/sync", {
+    if (!apexPlayerName.trim()) {
+      setMessage(createErrorMessage("Apex のプレイヤー名を入力してください。"))
+      return
+    }
+
+    setIsSyncingApex(true)
+    const response = await fetch("/api/connections/apex/sync", {
       method: "POST",
       headers: {
+        "Content-Type": "application/json",
         Authorization: `Bearer ${accessToken}`,
       },
+      body: JSON.stringify({
+        platform: apexPlatform,
+        playerName: apexPlayerName.trim(),
+      }),
     })
-    const payload = (await response.json().catch(() => null)) as { error?: string } | SpotifyPresence | null
-    setIsSyncingSpotify(false)
 
-    if (!response.ok) {
-      setMessage(createErrorMessage(payload && "error" in payload ? payload.error : "Spotify の同期に失敗しました。"))
+    const payload = (await response.json().catch(() => null)) as ({ error?: string } & Partial<ApexProfileCache>) | null
+    setIsSyncingApex(false)
+
+    if (!response.ok || !payload || "error" in payload) {
+      setMessage(createErrorMessage(payload?.error ?? "Apex 情報の同期に失敗しました。"))
       return
     }
 
-    setSpotifyPresence(payload as SpotifyPresence)
-    setMessage(createSuccessMessage("Spotify を同期しました。"))
+    setApexConnection({
+      user_id: user?.id ?? "",
+      platform: payload.platform ?? apexPlatform,
+      player_name: payload.player_name ?? apexPlayerName.trim(),
+      created_at: apexConnection?.created_at ?? new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    })
+    setApexProfile(payload as ApexProfileCache)
+    setApexPlatform((payload.platform as "origin" | "psn" | "xbl") ?? apexPlatform)
+    setApexPlayerName(payload.player_name ?? apexPlayerName.trim())
+    setMessage(createSuccessMessage("Apex 情報を同期しました。"))
   }
 
-  const handleDisconnectSpotify = async () => {
+  const handleDisconnectApex = async () => {
     const accessToken = await getSessionAccessToken()
     if (!accessToken) {
-      setMessage(createErrorMessage("Spotify を解除するにはログインが必要です。"))
+      setMessage(createErrorMessage("Apex 接続を解除するにはログインが必要です。"))
       return
     }
 
-    setIsDisconnectingSpotify(true)
-    const response = await fetch("/api/connections/spotify/disconnect", {
+    setIsDisconnectingApex(true)
+    const response = await fetch("/api/connections/apex/disconnect", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${accessToken}`,
       },
     })
     const payload = (await response.json().catch(() => null)) as { error?: string } | null
-    setIsDisconnectingSpotify(false)
+    setIsDisconnectingApex(false)
 
     if (!response.ok) {
-      setMessage(createErrorMessage(payload?.error ?? "Spotify の解除に失敗しました。"))
+      setMessage(createErrorMessage(payload?.error ?? "Apex 接続の解除に失敗しました。"))
       return
     }
 
-    setSpotifyConnection(null)
-    setSpotifyPresence(null)
-    setMessage(createSuccessMessage("Spotify の接続を解除しました。"))
+    setApexConnection(null)
+    setApexProfile(null)
+    setApexPlatform("origin")
+    setApexPlayerName("")
+    setMessage(createSuccessMessage("Apex 接続を解除しました。"))
   }
 
   const handleDisconnectDiscord = async () => {
@@ -338,48 +344,70 @@ export function ConnectionsClient() {
               )}
             </section>
 
-            <section className="rounded-3xl border border-border/80 p-4">
-              <div className="mb-3 flex items-start justify-between gap-3">
-                <div>
-                  <p className="text-sm font-semibold">Spotify</p>
-                  <p className="text-xs text-muted-foreground">
-                    現在再生中の曲、再生していない場合は最後に再生した曲をプロフィールに表示します。
-                  </p>
+            {isAdmin ? (
+              <section className="rounded-3xl border border-border/80 p-4">
+                <div className="mb-3 flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-semibold">Apex Legends</p>
+                    <p className="text-xs text-muted-foreground">
+                      `apex.tracker.gg` からレベル、ランク、レジェンド、戦績を同期してプロフィールに表示します。
+                    </p>
+                  </div>
+                  <span className="rounded-full border border-border/70 px-2 py-1 text-xs">
+                    {apexConnection ? "接続済み" : "未接続"}
+                  </span>
                 </div>
-                <span className="rounded-full border border-border/70 px-2 py-1 text-xs">
-                  {spotifyConnection ? "接続済み" : "未接続"}
-                </span>
-              </div>
 
-              {spotifyPresence ? (
-                <div className="mb-3">
-                  <SpotifyWidget presence={spotifyPresence} compact />
+                {apexProfile ? (
+                  <div className="mb-3">
+                    <ApexWidget profile={apexProfile} compact />
+                  </div>
+                ) : null}
+
+                <div className="grid gap-3 sm:grid-cols-[180px_minmax(0,1fr)]">
+                  <div className="space-y-2">
+                    <p className="text-xs text-muted-foreground">プラットフォーム</p>
+                    <Select value={apexPlatform} onValueChange={(value) => setApexPlatform(value as "origin" | "psn" | "xbl")}>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="origin">{apexPlatformLabels.origin}</SelectItem>
+                        <SelectItem value="psn">{apexPlatformLabels.psn}</SelectItem>
+                        <SelectItem value="xbl">{apexPlatformLabels.xbl}</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <p className="text-xs text-muted-foreground">プレイヤー名</p>
+                    <Input
+                      value={apexPlayerName}
+                      onChange={(event) => setApexPlayerName(event.target.value)}
+                      placeholder={apexPlatform === "origin" ? "EA / Origin のプレイヤー名" : "Tracker に表示されるプレイヤー名"}
+                    />
+                  </div>
                 </div>
-              ) : null}
 
-              {spotifyConnection ? (
-                <div className="flex flex-wrap gap-2">
-                  <Button variant="outline" size="sm" onClick={handleSyncSpotify} disabled={isSyncingSpotify}>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <Button size="sm" onClick={handleSyncApex} disabled={isSyncingApex}>
                     <RefreshCw className="size-4" />
-                    {isSyncingSpotify ? "同期中..." : "今の再生状態を更新"}
+                    {isSyncingApex ? "同期中..." : apexConnection ? "接続情報を更新" : "保存して同期"}
                   </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={handleDisconnectSpotify}
-                    disabled={isDisconnectingSpotify}
-                  >
-                    <Unplug className="size-4" />
-                    {isDisconnectingSpotify ? "解除中..." : "接続解除"}
-                  </Button>
+
+                  {apexConnection ? (
+                    <Button variant="outline" size="sm" onClick={handleDisconnectApex} disabled={isDisconnectingApex}>
+                      <Unplug className="size-4" />
+                      {isDisconnectingApex ? "解除中..." : "接続解除"}
+                    </Button>
+                  ) : null}
                 </div>
-              ) : (
-                <Button size="sm" onClick={handleConnectSpotify}>
-                  <Link2 className="size-4" />
-                  Spotify を接続
-                </Button>
-              )}
-            </section>
+
+                <div className="mt-3 rounded-2xl border border-dashed border-border/70 bg-muted/20 p-3 text-sm text-muted-foreground">
+                  審査中の実験機能です。Tracker 側の権限やプロフィール公開状態によって同期に失敗することがあります。
+                </div>
+              </section>
+            ) : null}
           </div>
         )}
       </main>
@@ -388,4 +416,3 @@ export function ConnectionsClient() {
     </div>
   )
 }
-
