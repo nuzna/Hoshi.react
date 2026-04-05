@@ -8,6 +8,10 @@ import { ImagePlus, LogOut, Search, Send, X } from "lucide-react"
 import { AnimatePresence, motion } from "motion/react"
 
 import { AuthDialog } from "@/components/auth-dialog"
+import { AdminNavButton } from "@/components/admin-nav-button"
+import { AnnouncementDialog } from "@/components/announcement-dialog"
+import { AppMessageBanner, createErrorMessage, createSuccessMessage, type AppMessage } from "@/components/app-message"
+import { MobileBottomNav } from "@/components/mobile-bottom-nav"
 import { ModeToggle } from "@/components/mode-toggle"
 import { MobileUserMenu } from "@/components/mobile-user-menu"
 import { NotificationBell } from "@/components/notification-bell"
@@ -15,8 +19,10 @@ import { PostCard } from "@/components/post-card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
 import { ACHIEVEMENT_DEFINITIONS } from "@/lib/achievements"
+import { fetchPublicAdminUserIds } from "@/lib/admin-users"
 import { deletePostWithMedia } from "@/lib/post-delete"
 import {
   preparePostImageSelection,
@@ -27,10 +33,47 @@ import { hydratePostsRelations, pickSingleRelation, POST_SELECT_QUERY, type Prof
 import { uploadPostImagesToB2 } from "@/lib/post-upload"
 import { getSupabaseBrowserClient } from "@/lib/supabase/client"
 
+type TimelineTab = "latest" | "following" | "trending"
+
+function getDeterministicBoost(seed: string) {
+  let hash = 0
+  for (let index = 0; index < seed.length; index += 1) {
+    hash = (hash * 31 + seed.charCodeAt(index)) >>> 0
+  }
+  return (hash % 1000) / 1000
+}
+
+function calculateTrendingScore(post: TimelinePost, replyCount: number, quoteCount: number, repostCount: number) {
+  const likeCount = post.post_likes?.length ?? 0
+  const reactionCount = post.post_reactions?.length ?? 0
+  const hoursSincePosted = Math.max(0, (Date.now() - new Date(post.created_at).getTime()) / 3_600_000)
+  const weightedEngagement =
+    likeCount * 3.2 +
+    replyCount * 4.8 +
+    reactionCount * 1.3 +
+    quoteCount * 4 +
+    repostCount * 1.8 +
+    (replyCount / (likeCount + 1)) * 2.4
+  const tieBreaker = getDeterministicBoost(post.id) * 0.05
+
+  if (weightedEngagement <= 0) {
+    const quietPenalty = Math.min(hoursSincePosted, 72) * 0.03
+    const freshnessFloor = Math.max(0, 6 - hoursSincePosted) * 0.015
+    return freshnessFloor - quietPenalty + tieBreaker
+  }
+
+  const momentum = Math.log1p(weightedEngagement) * weightedEngagement
+  const recencyBoost = hoursSincePosted < 12 ? (12 - hoursSincePosted) * 0.12 : 0
+  return momentum / Math.pow(hoursSincePosted + 2, 1.28) + recencyBoost + tieBreaker
+}
+
 export default function Home() {
   const [user, setUser] = useState<User | null>(null)
   const [myProfile, setMyProfile] = useState<ProfileLite | null>(null)
+  const [adminUserIds, setAdminUserIds] = useState<Set<string>>(new Set())
   const [posts, setPosts] = useState<TimelinePost[]>([])
+  const [timelineTab, setTimelineTab] = useState<TimelineTab>("latest")
+  const [followingIds, setFollowingIds] = useState<string[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [isPosting, setIsPosting] = useState(false)
   const [pendingLikePostId, setPendingLikePostId] = useState<string | null>(null)
@@ -41,7 +84,7 @@ export default function Home() {
   const [quoteTarget, setQuoteTarget] = useState<TimelinePost | null>(null)
   const [replyTarget, setReplyTarget] = useState<TimelinePost | null>(null)
   const [searchQuery, setSearchQuery] = useState("")
-  const [message, setMessage] = useState<string | null>(null)
+  const [message, setMessage] = useState<AppMessage | null>(null)
   const [authDialogOpen, setAuthDialogOpen] = useState(false)
   const [authDialogMode, setAuthDialogMode] = useState<"login" | "signup">("login")
   const composerFileInputRef = useRef<HTMLInputElement | null>(null)
@@ -50,15 +93,27 @@ export default function Home() {
     const supabase = getSupabaseBrowserClient()
     const { data, error } = await supabase
       .from("profiles")
-      .select("id, username, display_name, avatar_url")
+      .select("id, username, display_name, avatar_url, display_font")
       .eq("id", userId)
       .maybeSingle()
 
     if (error) {
-      setMessage(error.message)
+      setMessage(createErrorMessage(error))
       return
     }
     setMyProfile((data ?? null) as ProfileLite | null)
+  }, [])
+
+  const fetchFollowingIds = useCallback(async (userId: string) => {
+    const supabase = getSupabaseBrowserClient()
+    const { data, error } = await supabase.from("follows").select("following_id").eq("follower_id", userId)
+
+    if (error) {
+      setMessage(createErrorMessage(error))
+      return
+    }
+
+    setFollowingIds((data ?? []).map((row) => row.following_id))
   }, [])
 
   const fetchPosts = useCallback(async () => {
@@ -70,7 +125,7 @@ export default function Home() {
       .limit(120)
 
     if (error) {
-      setMessage(error.message)
+      setMessage(createErrorMessage(error))
       setPosts([])
       setIsLoading(false)
       return
@@ -87,11 +142,14 @@ export default function Home() {
 
     queueMicrotask(() => {
       void fetchPosts()
+      void fetchPublicAdminUserIds(supabase)
+        .then((ids) => setAdminUserIds(ids))
+        .catch((error) => setMessage(createErrorMessage(error)))
     })
 
     void supabase.auth.getUser().then(({ data, error }) => {
       if (error) {
-        setMessage(error.message)
+        setMessage(createErrorMessage(error))
         return
       }
       setUser(data.user)
@@ -126,6 +184,32 @@ export default function Home() {
   }, [fetchMyProfile, fetchPosts])
 
   useEffect(() => {
+    if (!user) {
+      setFollowingIds([])
+      if (timelineTab === "following") {
+        setTimelineTab("latest")
+      }
+      return
+    }
+
+    const supabase = getSupabaseBrowserClient()
+    void fetchFollowingIds(user.id)
+
+    const channel = supabase
+      .channel(`home-follows-${user.id}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "follows", filter: `follower_id=eq.${user.id}` },
+        () => void fetchFollowingIds(user.id),
+      )
+      .subscribe()
+
+    return () => {
+      void supabase.removeChannel(channel)
+    }
+  }, [fetchFollowingIds, timelineTab, user])
+
+  useEffect(() => {
     return () => {
       revokePendingPostImages(composerImages)
     }
@@ -157,7 +241,7 @@ export default function Home() {
       setComposerImages((current) => [...current, ...prepared])
       setMessage(null)
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "画像の準備に失敗しました。")
+      setMessage(createErrorMessage(error, "画像の準備に失敗しました。"))
     } finally {
       event.target.value = ""
     }
@@ -183,7 +267,7 @@ export default function Home() {
     const hasImages = composerImages.length > 0
     if (!quoteTarget && !replyTarget && content.length === 0 && !hasImages) return
     if ((quoteTarget || replyTarget) && content.length === 0 && !hasImages) {
-      setMessage("引用や返信には本文または画像が必要です。")
+      setMessage(createErrorMessage("引用や返信には本文または画像が必要です。"))
       return
     }
 
@@ -201,7 +285,7 @@ export default function Home() {
 
     if (error) {
       setIsPosting(false)
-      setMessage(error.message)
+      setMessage(createErrorMessage(error))
       return
     }
 
@@ -224,13 +308,13 @@ export default function Home() {
         if (imageInsertError) {
           await supabase.from("posts").delete().eq("id", createdPost.id).eq("user_id", user.id)
           setIsPosting(false)
-          setMessage(imageInsertError.message)
+          setMessage(createErrorMessage(imageInsertError))
           return
         }
       } catch (uploadError) {
         await supabase.from("posts").delete().eq("id", createdPost.id).eq("user_id", user.id)
         setIsPosting(false)
-        setMessage(uploadError instanceof Error ? uploadError.message : "画像アップロードに失敗しました。")
+        setMessage(createErrorMessage(uploadError, "画像アップロードに失敗しました。"))
         return
       }
     }
@@ -260,7 +344,7 @@ export default function Home() {
     const { error } = await request
 
     setPendingLikePostId(null)
-    if (error) setMessage(error.message)
+    if (error) setMessage(createErrorMessage(error))
   }
 
   const handleToggleRepost = async (post: TimelinePost) => {
@@ -283,7 +367,7 @@ export default function Home() {
 
     if (findError) {
       setPendingRepostPostId(null)
-      setMessage(findError.message)
+      setMessage(createErrorMessage(findError))
       return
     }
 
@@ -294,7 +378,7 @@ export default function Home() {
 
     const { error } = await request
     setPendingRepostPostId(null)
-    if (error) setMessage(error.message)
+    if (error) setMessage(createErrorMessage(error))
   }
 
   const handleToggleReaction = async (post: TimelinePost, emoji: string) => {
@@ -324,7 +408,7 @@ export default function Home() {
     const { error } = await request
 
     setPendingReactionKey(null)
-    if (error) setMessage(error.message)
+    if (error) setMessage(createErrorMessage(error))
   }
 
   const handleDeletePost = async (post: TimelinePost) => {
@@ -333,7 +417,7 @@ export default function Home() {
     try {
       await deletePostWithMedia(post.id)
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "投稿削除に失敗しました。")
+      setMessage(createErrorMessage(error, "投稿削除に失敗しました。"))
     }
   }
 
@@ -353,16 +437,16 @@ export default function Home() {
     })
 
     if (error) {
-      setMessage(error.message)
+      setMessage(createErrorMessage(error))
       return
     }
-    setMessage("通報しました")
+    setMessage(createSuccessMessage("通報しました"))
   }
 
   const handleSignOut = async () => {
     const supabase = getSupabaseBrowserClient()
     const { error } = await supabase.auth.signOut()
-    if (error) setMessage(error.message)
+    if (error) setMessage(createErrorMessage(error))
   }
 
   const repostCountMap = useMemo(() => {
@@ -374,19 +458,69 @@ export default function Home() {
     return map
   }, [posts])
 
-  const statusText = isLoading ? "読み込み中" : `${posts.length} 個の投稿`
+  const replyCountMap = useMemo(() => {
+    const map = new Map<string, number>()
+    for (const post of posts) {
+      if (!post.reply_to_id) continue
+      map.set(post.reply_to_id, (map.get(post.reply_to_id) ?? 0) + 1)
+    }
+    return map
+  }, [posts])
+
+  const quoteCountMap = useMemo(() => {
+    const map = new Map<string, number>()
+    for (const post of posts) {
+      if (!post.repost_of_id || (post.content ?? "").trim() === "") continue
+      map.set(post.repost_of_id, (map.get(post.repost_of_id) ?? 0) + 1)
+    }
+    return map
+  }, [posts])
+
+  const timelinePosts = useMemo(() => {
+    if (timelineTab === "following") {
+      if (!user) return []
+      const visibleIds = new Set([...followingIds, user.id])
+      return posts.filter((post) => visibleIds.has(post.user_id))
+    }
+
+    if (timelineTab === "trending") {
+      return [...posts].sort((left, right) => {
+        const leftScore = calculateTrendingScore(
+          left,
+          replyCountMap.get(left.id) ?? 0,
+          quoteCountMap.get(left.id) ?? 0,
+          repostCountMap.get(left.id) ?? 0,
+        )
+        const rightScore = calculateTrendingScore(
+          right,
+          replyCountMap.get(right.id) ?? 0,
+          quoteCountMap.get(right.id) ?? 0,
+          repostCountMap.get(right.id) ?? 0,
+        )
+
+        if (rightScore === leftScore) {
+          return new Date(right.created_at).getTime() - new Date(left.created_at).getTime()
+        }
+        return rightScore - leftScore
+      })
+    }
+
+    return posts
+  }, [followingIds, posts, quoteCountMap, replyCountMap, repostCountMap, timelineTab, user])
+
   const searchKeyword = searchQuery.trim().toLowerCase()
+  const statusText = isLoading ? "読み込み中" : `${timelinePosts.length} 件の投稿`
 
   const filteredPosts = useMemo(() => {
-    if (!searchKeyword) return posts
-    return posts.filter((post) => {
+    if (!searchKeyword) return timelinePosts
+    return timelinePosts.filter((post) => {
       const repost = pickSingleRelation(post.repost_of)
       const haystack = `${post.content ?? ""} ${post.profiles?.display_name ?? ""} @${post.profiles?.username ?? ""} ${
         repost?.content ?? ""
       }`.toLowerCase()
       return haystack.includes(searchKeyword)
     })
-  }, [posts, searchKeyword])
+  }, [searchKeyword, timelinePosts])
 
   const matchedAchievementDefs = useMemo(() => {
     if (!searchKeyword) return []
@@ -411,7 +545,8 @@ export default function Home() {
           </div>
 
           <div className="flex items-center gap-1.5 sm:gap-2">
-            {user ? <NotificationBell userId={user.id} /> : null}
+            <AnnouncementDialog />
+            <div className="hidden sm:block">{user ? <NotificationBell userId={user.id} /> : null}</div>
             {user ? (
               <>
                 <div className="sm:hidden">
@@ -419,6 +554,7 @@ export default function Home() {
                 </div>
                 <div className="hidden items-center gap-1 sm:flex">
                   <ModeToggle />
+                  <AdminNavButton userId={user.id} />
                   {myProfile ? (
                     <Button asChild variant="ghost" size="sm">
                       <Link href={`/user/${myProfile.username}`}>プロフィール</Link>
@@ -445,7 +581,7 @@ export default function Home() {
         </div>
       </motion.header>
 
-      <main className="mx-auto w-full max-w-[680px] px-5 pb-36 sm:px-6">
+      <main className="mx-auto w-full max-w-[680px] px-5 pb-36 sm:px-6 sm:pb-36">
         <section className="border-b border-border/80 py-3">
           <div className="flex items-center gap-3">
             <Search className="size-4 text-muted-foreground" />
@@ -480,76 +616,91 @@ export default function Home() {
           </section>
         ) : null}
 
-        {message ? (
-          <p className="mt-3 rounded-2xl border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-            {message}
-          </p>
-        ) : null}
+        <AppMessageBanner message={message} className="mt-3" />
 
-        <section>
-          {isLoading ? (
-            Array.from({ length: 3 }).map((_, index) => (
-              <div key={index} className="border-b border-border/80 px-3 py-4">
-                <div className="mb-3 flex items-center gap-3">
-                  <Skeleton className="size-10 rounded-full" />
-                  <div className="space-y-1">
-                    <Skeleton className="h-3 w-24" />
-                    <Skeleton className="h-3 w-16" />
+        <Tabs value={timelineTab} onValueChange={(value) => setTimelineTab(value as TimelineTab)} className="mt-3">
+            <TabsList variant="line" className="mx-auto max-w-md">
+              <TabsTrigger value="latest">最新</TabsTrigger>
+              <TabsTrigger value="following">フォロー中</TabsTrigger>
+              <TabsTrigger value="trending">人気</TabsTrigger>
+            </TabsList>
+
+          {(["latest", "following", "trending"] as const).map((tabValue) => (
+            <TabsContent key={tabValue} value={tabValue}>
+              <section>
+                {isLoading ? (
+                  Array.from({ length: 3 }).map((_, index) => (
+                    <div key={index} className="border-b border-border/80 px-3 py-4">
+                      <div className="mb-3 flex items-center gap-3">
+                        <Skeleton className="size-10 rounded-full" />
+                        <div className="space-y-1">
+                          <Skeleton className="h-3 w-24" />
+                          <Skeleton className="h-3 w-16" />
+                        </div>
+                      </div>
+                      <Skeleton className="mb-2 h-3 w-full" />
+                      <Skeleton className="mb-2 h-3 w-10/12" />
+                      <div className="mt-4 flex gap-4">
+                        <Skeleton className="h-7 w-14 rounded-full" />
+                        <Skeleton className="h-7 w-14 rounded-full" />
+                        <Skeleton className="h-7 w-14 rounded-full" />
+                      </div>
+                    </div>
+                  ))
+                ) : filteredPosts.length === 0 ? (
+                  <div className="border-b border-border/80 px-4 py-10 text-center text-sm text-muted-foreground">
+                    {searchKeyword
+                      ? "検索条件に一致する投稿はありません。"
+                      : timelineTab === "following" && !user
+                        ? "フォロー中タブはログインすると使えます。"
+                        : timelineTab === "following"
+                          ? "フォロー中ユーザーの投稿はまだありません。"
+                          : "まだ投稿がありません。"}
                   </div>
-                </div>
-                <Skeleton className="mb-2 h-3 w-full" />
-                <Skeleton className="mb-2 h-3 w-10/12" />
-                <div className="mt-4 flex gap-4">
-                  <Skeleton className="h-7 w-14 rounded-full" />
-                  <Skeleton className="h-7 w-14 rounded-full" />
-                  <Skeleton className="h-7 w-14 rounded-full" />
-                </div>
-              </div>
-            ))
-          ) : filteredPosts.length === 0 ? (
-            <div className="border-b border-border/80 px-4 py-10 text-center text-sm text-muted-foreground">
-              {searchKeyword ? "検索条件に一致する投稿はありません。" : "まだ投稿がありません。"}
-            </div>
-          ) : (
-            <AnimatePresence initial={false}>
-              {filteredPosts.map((post, index) => (
-                <motion.div
-                  key={post.id}
-                  layout
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -8 }}
-                  transition={{ duration: 0.22, delay: Math.min(index * 0.015, 0.08) }}
-                >
-                  <PostCard
-                    post={post}
-                    currentUserId={user?.id ?? null}
-                    onToggleLike={handleToggleLike}
-                    onStartReply={(target) => {
-                      setReplyTarget(target)
-                      setQuoteTarget(null)
-                    }}
-                    onToggleRepost={handleToggleRepost}
-                    onStartQuote={(target) => {
-                      setQuoteTarget(target)
-                      setReplyTarget(null)
-                    }}
-                    onToggleReaction={handleToggleReaction}
-                    onDeletePost={handleDeletePost}
-                    onReportPost={handleReportPost}
-                    pendingLikePostId={pendingLikePostId}
-                    pendingRepostPostId={pendingRepostPostId}
-                    pendingReactionKey={pendingReactionKey}
-                    repostCount={repostCountMap.get(post.id) ?? 0}
-                  />
-                </motion.div>
-              ))}
-            </AnimatePresence>
-          )}
-        </section>
+                ) : (
+                  <AnimatePresence initial={false}>
+                    {filteredPosts.map((post, index) => (
+                      <motion.div
+                        key={post.id}
+                        layout
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -8 }}
+                        transition={{ duration: 0.22, delay: Math.min(index * 0.015, 0.08) }}
+                      >
+                        <PostCard
+                          post={post}
+                          currentUserId={user?.id ?? null}
+                          onToggleLike={handleToggleLike}
+                          onStartReply={(target) => {
+                            setReplyTarget(target)
+                            setQuoteTarget(null)
+                          }}
+                          onToggleRepost={handleToggleRepost}
+                          onStartQuote={(target) => {
+                            setQuoteTarget(target)
+                            setReplyTarget(null)
+                          }}
+                          onToggleReaction={handleToggleReaction}
+                          onDeletePost={handleDeletePost}
+                          onReportPost={handleReportPost}
+                          pendingLikePostId={pendingLikePostId}
+                          pendingRepostPostId={pendingRepostPostId}
+                          pendingReactionKey={pendingReactionKey}
+                          repostCount={repostCountMap.get(post.id) ?? 0}
+                          adminUserIds={adminUserIds}
+                        />
+                      </motion.div>
+                    ))}
+                  </AnimatePresence>
+                )}
+              </section>
+            </TabsContent>
+          ))}
+        </Tabs>
       </main>
 
-      <div className="fixed inset-x-0 bottom-0 z-40 border-t border-border/80 bg-background/95 backdrop-blur">
+      <div className="fixed inset-x-0 bottom-16 z-40 border-t border-border/80 bg-background/95 backdrop-blur sm:bottom-0">
         <motion.section
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
@@ -642,6 +793,7 @@ export default function Home() {
       </div>
 
       <AuthDialog open={authDialogOpen} onOpenChange={setAuthDialogOpen} mode={authDialogMode} />
+      <MobileBottomNav userId={user?.id ?? null} profileUsername={myProfile?.username ?? null} />
     </div>
   )
 }

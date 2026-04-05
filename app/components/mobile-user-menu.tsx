@@ -2,7 +2,7 @@
 
 import Link from "next/link"
 
-import { LogOut, Menu, Moon, Sun, UserCircle2 } from "lucide-react"
+import { Link2, LogOut, Menu, Moon, Sun, UserCircle2 } from "lucide-react"
 import { useTheme } from "next-themes"
 
 import { Button } from "@/components/ui/button"
@@ -41,6 +41,12 @@ export function MobileUserMenu({ profileUsername, onSignOut }: MobileUserMenuPro
             </Link>
           </DropdownMenuItem>
         ) : null}
+        <DropdownMenuItem asChild>
+          <Link href="/connections">
+            <Link2 className="size-4" />
+            接続
+          </Link>
+        </DropdownMenuItem>
         <DropdownMenuItem onClick={() => setTheme("light")}>
           <Sun className="size-4" />
           ライト
@@ -59,4 +65,3 @@ export function MobileUserMenu({ profileUsername, onSignOut }: MobileUserMenuPro
     </DropdownMenu>
   )
 }
-

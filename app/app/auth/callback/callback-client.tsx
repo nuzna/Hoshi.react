@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 
+import { AppMessageBanner, createErrorMessage, type AppMessage } from "@/components/app-message"
 import { getSupabaseBrowserClient } from "@/lib/supabase/client"
 
 function sanitizeNext(nextPath: string | null) {
@@ -61,7 +62,7 @@ async function getAvailableUsername(
 export function AuthCallbackClient() {
   const router = useRouter()
   const searchParams = useSearchParams()
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<AppMessage | null>(null)
 
   useEffect(() => {
     const run = async () => {
@@ -72,7 +73,7 @@ export function AuthCallbackClient() {
       if (code) {
         const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(code)
         if (exchangeError) {
-          setError(exchangeError.message)
+          setError(createErrorMessage(exchangeError))
           return
         }
       }
@@ -154,8 +155,8 @@ export function AuthCallbackClient() {
 
   if (error) {
     return (
-      <div className="grid min-h-screen place-items-center bg-background p-6 text-sm text-destructive">
-        認証に失敗しました: {error}
+      <div className="grid min-h-screen place-items-center bg-background p-6">
+        <AppMessageBanner message={error} className="max-w-md" />
       </div>
     )
   }

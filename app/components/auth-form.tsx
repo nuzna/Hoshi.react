@@ -2,13 +2,13 @@
 import { useState, type FormEvent } from "react"
 import { useRouter } from "next/navigation"
 
+import { AppMessageBanner, createErrorMessage, createSuccessMessage, type AppMessage } from "@/components/app-message"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import {
   Field,
   FieldContent,
   FieldDescription,
-  FieldError,
   FieldGroup,
   FieldLabel,
 } from "@/components/ui/field"
@@ -45,11 +45,9 @@ export function AuthForm({ initialMode = "login", onSuccess }: AuthFormProps) {
   const [gender, setGender] = useState("")
   const [termsAccepted, setTermsAccepted] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [message, setMessage] = useState<string | null>(null)
+  const [message, setMessage] = useState<AppMessage | null>(null)
 
   const resetFeedback = () => {
-    setError(null)
     setMessage(null)
   }
 
@@ -77,7 +75,7 @@ export function AuthForm({ initialMode = "login", onSuccess }: AuthFormProps) {
       })
 
       if (oauthError) {
-        setError(oauthError.message)
+        setMessage(createErrorMessage(oauthError))
         setIsLoading(false)
         return
       }
@@ -87,13 +85,9 @@ export function AuthForm({ initialMode = "login", onSuccess }: AuthFormProps) {
         return
       }
 
-      setError("Discord 認証の開始に失敗しました。")
+      setMessage(createErrorMessage("Discord 認証の開始に失敗しました。"))
     } catch (caughtError) {
-      setError(
-        caughtError instanceof Error
-          ? caughtError.message
-          : "Discord 認証の開始に失敗しました。"
-      )
+      setMessage(createErrorMessage(caughtError, "Discord 認証の開始に失敗しました。"))
       setIsLoading(false)
     }
   }
@@ -113,18 +107,14 @@ export function AuthForm({ initialMode = "login", onSuccess }: AuthFormProps) {
         })
 
         if (signInError) {
-          setError(signInError.message)
+          setMessage(createErrorMessage(signInError))
           return
         }
 
         onSuccess?.()
         router.push("/")
       } catch (caughtError) {
-        setError(
-          caughtError instanceof Error
-            ? caughtError.message
-            : "ログインに失敗しました。時間をおいて再試行してください。"
-        )
+        setMessage(createErrorMessage(caughtError, "ログインに失敗しました。時間をおいて再試行してください。"))
       } finally {
         setIsLoading(false)
       }
@@ -132,18 +122,18 @@ export function AuthForm({ initialMode = "login", onSuccess }: AuthFormProps) {
     }
 
     if (!USERNAME_PATTERN.test(username)) {
-      setError("ユーザー名は3〜20文字の英数字とアンダースコアのみ使えます。")
+      setMessage(createErrorMessage("ユーザー名は3〜20文字の英数字とアンダースコアのみ使えます。"))
       return
     }
 
     const ageValue = Number(age)
     if (!Number.isFinite(ageValue) || ageValue < 1 || ageValue > 120) {
-      setError("年齢は1〜120の範囲で入力してください。")
+      setMessage(createErrorMessage("年齢は1〜120の範囲で入力してください。"))
       return
     }
 
     if (!termsAccepted) {
-      setError("利用規約への同意が必要です。")
+      setMessage(createErrorMessage("利用規約への同意が必要です。"))
       return
     }
 
@@ -163,8 +153,8 @@ export function AuthForm({ initialMode = "login", onSuccess }: AuthFormProps) {
       })
 
       if (signUpError) {
-        setError(signUpError.message)
-        return
+          setMessage(createErrorMessage(signUpError))
+          return
       }
 
       if (data.session) {
@@ -173,13 +163,9 @@ export function AuthForm({ initialMode = "login", onSuccess }: AuthFormProps) {
         return
       }
 
-      setMessage("確認メールを送信しました。メール内のリンクから認証してください。")
+      setMessage(createSuccessMessage("確認メールを送信しました。メール内のリンクから認証してください。"))
     } catch (caughtError) {
-      setError(
-        caughtError instanceof Error
-          ? caughtError.message
-          : "登録に失敗しました。時間をおいて再試行してください。"
-      )
+      setMessage(createErrorMessage(caughtError, "登録に失敗しました。時間をおいて再試行してください。"))
     } finally {
       setIsLoading(false)
     }
@@ -359,13 +345,7 @@ export function AuthForm({ initialMode = "login", onSuccess }: AuthFormProps) {
           </FieldGroup>
         ) : null}
 
-        {error ? <FieldError>{error}</FieldError> : null}
-
-        {message ? (
-          <p className="rounded-2xl border border-border/80 bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
-            {message}
-          </p>
-        ) : null}
+        <AppMessageBanner message={message} />
 
         <div className="space-y-3 pt-1">
           <Button type="submit" className="h-11 w-full rounded-full" disabled={isLoading}>

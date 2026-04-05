@@ -4,7 +4,7 @@ import type { Database } from "@/lib/supabase/types"
 
 export type ProfileLite = Pick<
   Database["public"]["Tables"]["profiles"]["Row"],
-  "id" | "username" | "display_name" | "avatar_url"
+  "id" | "username" | "display_name" | "avatar_url" | "display_font"
 >
 
 export type LikeLite = Pick<Database["public"]["Tables"]["post_likes"]["Row"], "user_id">
@@ -69,7 +69,8 @@ export const POST_SELECT_QUERY = `
     id,
     username,
     display_name,
-    avatar_url
+    avatar_url,
+    display_font
   ),
   post_likes (
     user_id
@@ -100,7 +101,8 @@ const POST_RELATION_SELECT_QUERY = `
     id,
     username,
     display_name,
-    avatar_url
+    avatar_url,
+    display_font
   ),
   post_images (
     id,

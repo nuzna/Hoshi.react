@@ -2,7 +2,8 @@
 
 import Image from "next/image"
 import Link from "next/link"
-import { useState } from "react"
+import { useRouter } from "next/navigation"
+import { type MouseEvent, useState } from "react"
 
 import {
   Ellipsis,
@@ -27,6 +28,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 import { Button } from "@/components/ui/button"
+import { ProfileDisplayName } from "@/components/profile-display-name"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -53,6 +55,7 @@ type PostCardProps = {
   pendingRepostPostId: string | null
   pendingReactionKey: string | null
   repostCount: number
+  adminUserIds?: Set<string>
 }
 
 const emojiPicker = [
@@ -113,7 +116,9 @@ export function PostCard({
   pendingRepostPostId,
   pendingReactionKey,
   repostCount,
+  adminUserIds,
 }: PostCardProps) {
+  const router = useRouter()
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [reportOpen, setReportOpen] = useState(false)
   const [reportCategory, setReportCategory] = useState("spam")
@@ -131,6 +136,8 @@ export function PostCard({
 
   const displayName = post.profiles?.display_name ?? "名無し"
   const username = post.profiles?.username ?? "unknown-user"
+  const displayFont = post.profiles?.display_font ?? "geist"
+  const isAdmin = post.profiles?.id ? adminUserIds?.has(post.profiles.id) ?? false : false
   const replySource = pickSingleRelation(post.reply_to)
   const source = pickSingleRelation(post.repost_of)
   const isPureRepost = post.repost_of_id !== null && (post.content ?? "").trim() === ""
@@ -138,11 +145,27 @@ export function PostCard({
   const postImages = [...(post.post_images ?? [])].sort((a, b) => a.sort_order - b.sort_order)
   const sourceImages = [...(source?.post_images ?? [])].sort((a, b) => a.sort_order - b.sort_order)
 
+  const handleCardClick = (event: MouseEvent<HTMLElement>) => {
+    const target = event.target as HTMLElement
+    if (target.closest("a, button, input, textarea, [role='menuitem'], [data-no-post-link='true']")) return
+    if (typeof window !== "undefined" && window.getSelection()?.toString()) return
+    router.push(`/post/${post.id}`)
+  }
+
   return (
-    <article className="border-b border-border/80 px-3 py-4 transition-colors hover:bg-muted/20 sm:px-4">
+    <article
+      className="cursor-pointer border-b border-border/80 px-3 py-4 transition-colors hover:bg-muted/20 sm:px-4"
+      onClick={handleCardClick}
+    >
       {isPureRepost ? (
         <p className="mb-2 text-xs text-muted-foreground">
-          <span className="font-medium">{displayName}</span> がリポストしました
+          <ProfileDisplayName
+            name={displayName}
+            font={displayFont}
+            isAdmin={isAdmin}
+            textClassName="font-medium"
+          />{" "}
+          がリポストしました
         </p>
       ) : null}
 
@@ -162,7 +185,14 @@ export function PostCard({
             </div>
           )}
           <div className="leading-tight">
-            <p className="text-sm font-medium">{displayName}</p>
+            <p className="text-sm">
+              <ProfileDisplayName
+                name={displayName}
+                font={displayFont}
+                isAdmin={isAdmin}
+                textClassName="font-medium"
+              />
+            </p>
             <p className="text-xs text-muted-foreground">@{username}</p>
           </div>
         </Link>
@@ -225,7 +255,14 @@ export function PostCard({
         <div className="mb-4 rounded-2xl border border-border/70 bg-muted/25 p-3">
           <div className="mb-1 flex items-center justify-between gap-2 text-xs text-muted-foreground">
             <span>
-              @{source.profiles?.username ?? "unknown-user"} / {source.profiles?.display_name ?? "名無し"} さんの投稿の引用
+              @{source.profiles?.username ?? "unknown-user"} /{" "}
+              <ProfileDisplayName
+                name={source.profiles?.display_name ?? "名無し"}
+                font={source.profiles?.display_font}
+                isAdmin={source.profiles?.id ? adminUserIds?.has(source.profiles.id) ?? false : false}
+                textClassName="font-medium"
+              />{" "}
+              さんの投稿の引用
             </span>
             <Link href={`/post/${source.id}`} className="font-medium hover:text-foreground">
               元投稿を開く
@@ -259,13 +296,19 @@ export function PostCard({
           onClick={() => onToggleLike(post)}
           disabled={pendingLikePostId === post.id}
           aria-label="いいね"
-          className={likedByMe ? "text-foreground" : "text-muted-foreground"}
+          className={`rounded-full px-3 ${likedByMe ? "text-foreground" : "text-muted-foreground"}`}
         >
           <Heart className={`size-4 ${likedByMe ? "fill-current" : ""}`} />
           {likeCount}
         </Button>
 
-        <Button variant="ghost" size="icon-sm" onClick={() => onStartReply(post)} aria-label="返信" className="text-muted-foreground">
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          onClick={() => onStartReply(post)}
+          aria-label="返信"
+          className="rounded-full text-muted-foreground"
+        >
           <MessageCircleReply className="size-4" />
         </Button>
 
@@ -276,7 +319,7 @@ export function PostCard({
               size="sm"
               disabled={pendingRepostPostId === post.id}
               aria-label="共有"
-              className="text-muted-foreground"
+              className="rounded-full px-3 text-muted-foreground"
             >
               <Repeat2 className="size-4" />
               <span className="text-xs">{repostCount}</span>
@@ -297,7 +340,7 @@ export function PostCard({
 
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="icon-sm" aria-label="リアクション" className="text-muted-foreground">
+            <Button variant="ghost" size="icon-sm" aria-label="リアクション" className="rounded-full text-muted-foreground">
               <SmilePlus className="size-4" />
             </Button>
           </DropdownMenuTrigger>

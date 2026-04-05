@@ -27,10 +27,16 @@ import {
 } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 
+import { AdminNavButton } from "@/components/admin-nav-button";
+import { AnnouncementDialog } from "@/components/announcement-dialog";
 import { ModeToggle } from "@/components/mode-toggle";
+import { AppMessageBanner, createErrorMessage, createSuccessMessage, type AppMessage } from "@/components/app-message";
+import { MobileBottomNav } from "@/components/mobile-bottom-nav";
 import { MobileUserMenu } from "@/components/mobile-user-menu";
 import { NotificationBell } from "@/components/notification-bell";
 import { PostCard } from "@/components/post-card";
+import { ProfileDisplayName } from "@/components/profile-display-name";
+import { SpotifyWidget } from "@/components/spotify-widget";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -42,6 +48,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { TwemojiText } from "@/components/twemoji-text";
@@ -51,6 +58,13 @@ import {
   resolveAchievements,
   type ResolvedAchievement,
 } from "@/lib/achievements";
+import { fetchPublicAdminUserIds } from "@/lib/admin-users";
+import {
+  DISPLAY_FONT_OPTIONS,
+  getDisplayFontLabel,
+  normalizeDisplayFontValue,
+  type DisplayFontValue,
+} from "@/lib/display-fonts";
 import { deletePostWithMedia } from "@/lib/post-delete";
 import { hydratePostsRelations, pickSingleRelation, POST_SELECT_QUERY, type TimelinePost } from "@/lib/post-types";
 import {
@@ -67,8 +81,26 @@ import { prepareAvatarUpload } from "@/lib/avatar-image";
 
 type ProfileDetail = Pick<
   Database["public"]["Tables"]["profiles"]["Row"],
-  "id" | "username" | "display_name" | "bio" | "avatar_url" | "created_at" | "likes_visibility"
+  "id" | "username" | "display_name" | "bio" | "avatar_url" | "created_at" | "likes_visibility" | "username_changed_at" | "display_font"
 >;
+
+const USERNAME_PATTERN = /^[a-zA-Z0-9_]{3,20}$/;
+
+function formatUsernameResetAt(dateString: string | null) {
+  if (!dateString) return "今すぐ変更できます。";
+
+  const nextAt = new Date(new Date(dateString).getTime() + 24 * 60 * 60 * 1000);
+  const remainingMs = nextAt.getTime() - Date.now();
+
+  if (remainingMs <= 0) return "今すぐ変更できます。";
+
+  return `次の変更は ${nextAt.toLocaleString("ja-JP", {
+    month: "numeric",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  })} 以降です。`;
+}
 
 function UserPageContent() {
   const params = useParams<{ slug: string }>();
@@ -77,6 +109,7 @@ function UserPageContent() {
 
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<ProfileDetail | null>(null);
+  const [adminUserIds, setAdminUserIds] = useState<Set<string>>(new Set());
   const [posts, setPosts] = useState<TimelinePost[]>([]);
   const [likedPosts, setLikedPosts] = useState<TimelinePost[]>([]);
   const [activeFeed, setActiveFeed] = useState<"posts" | "likes">("posts");
@@ -88,12 +121,16 @@ function UserPageContent() {
 
   const [displayName, setDisplayName] = useState("");
   const [bio, setBio] = useState("");
+  const [editUsername, setEditUsername] = useState("");
   const [editDisplayName, setEditDisplayName] = useState("");
   const [editBio, setEditBio] = useState("");
+  const [editDisplayFont, setEditDisplayFont] = useState<DisplayFontValue>("geist");
   const [editAvatarFile, setEditAvatarFile] = useState<File | null>(null);
   const [editAvatarPreview, setEditAvatarPreview] = useState<string | null>(null);
   const [editLikesVisibility, setEditLikesVisibility] = useState<"public" | "private">("public");
   const [isEditProfileOpen, setIsEditProfileOpen] = useState(false);
+  const [profileFrozenUntil, setProfileFrozenUntil] = useState<string | null>(null);
+  const [spotifyPresence, setSpotifyPresence] = useState<Database["public"]["Tables"]["spotify_presence_cache"]["Row"] | null>(null);
 
   const [composerText, setComposerText] = useState("");
   const [composerImages, setComposerImages] = useState<PendingPostImage[]>([]);
@@ -118,7 +155,7 @@ function UserPageContent() {
   const [followingUsers, setFollowingUsers] = useState<FollowUser[]>([]);
   const [isFollowListLoading, setIsFollowListLoading] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
-  const [message, setMessage] = useState<string | null>(null);
+  const [message, setMessage] = useState<AppMessage | null>(null);
 
   const visiblePostIdsRef = useRef<Set<string>>(new Set());
   const composerFileInputRef = useRef<HTMLInputElement | null>(null);
@@ -132,12 +169,12 @@ function UserPageContent() {
       const supabase = getSupabaseBrowserClient();
       const { data, error } = await supabase
         .from("profiles")
-        .select("id, username, display_name, bio, avatar_url, created_at, likes_visibility")
+        .select("id, username, display_name, bio, avatar_url, created_at, likes_visibility, username_changed_at, display_font")
         .eq("username", slug)
         .maybeSingle();
 
       if (error) {
-        setMessage(error.message);
+        setMessage(createErrorMessage(error));
         setProfile(null);
         setPosts([]);
         setLikedPosts([]);
@@ -160,12 +197,32 @@ function UserPageContent() {
       setDisplayName(typedProfile.display_name);
       setBio(typedProfile.bio);
       if (!isEditProfileOpen) {
+        setEditUsername(typedProfile.username);
         setEditDisplayName(typedProfile.display_name);
         setEditBio(typedProfile.bio);
+        setEditDisplayFont(normalizeDisplayFontValue(typedProfile.display_font));
         setEditAvatarFile(null);
         setEditAvatarPreview(typedProfile.avatar_url);
         setEditLikesVisibility((typedProfile.likes_visibility as "public" | "private") ?? "public");
       }
+
+      const { data: moderationStatus, error: moderationError } = await supabase.rpc(
+        "get_public_user_moderation_status",
+        { p_user_id: typedProfile.id },
+      );
+
+      if (moderationError) {
+        setProfileFrozenUntil(null);
+      } else {
+        setProfileFrozenUntil(moderationStatus?.[0]?.frozen_until ?? null);
+      }
+
+      const { data: spotifyPresenceData } = await supabase
+        .from("spotify_presence_cache")
+        .select("*")
+        .eq("user_id", typedProfile.id)
+        .maybeSingle();
+      setSpotifyPresence((spotifyPresenceData ?? null) as Database["public"]["Tables"]["spotify_presence_cache"]["Row"] | null);
 
       const { data: postsData, error: postsError } = await supabase
         .from("posts")
@@ -175,7 +232,7 @@ function UserPageContent() {
         .limit(120);
 
       if (postsError) {
-        setMessage(postsError.message);
+        setMessage(createErrorMessage(postsError));
         setPosts([]);
         setIsLoading(false);
         return;
@@ -216,7 +273,7 @@ function UserPageContent() {
       } catch (achievementError) {
         setAchievements([]);
         if (achievementError instanceof Error) {
-          setMessage(achievementError.message);
+          setMessage(createErrorMessage(achievementError));
         }
       }
 
@@ -233,7 +290,7 @@ function UserPageContent() {
         .in("repost_of_id", ids);
 
       if (repostError) {
-        setMessage(repostError.message);
+        setMessage(createErrorMessage(repostError));
         setIsLoading(false);
         return;
       }
@@ -264,7 +321,7 @@ function UserPageContent() {
       .maybeSingle();
 
     if (error) {
-      setMessage(error.message);
+      setMessage(createErrorMessage(error));
       return;
     }
     setIsFollowing(Boolean(data));
@@ -285,7 +342,7 @@ function UserPageContent() {
       .maybeSingle();
 
     if (error) {
-      setMessage(error.message);
+      setMessage(createErrorMessage(error));
       return;
     }
     setIsBlocked(Boolean(data));
@@ -315,7 +372,7 @@ function UserPageContent() {
     setIsFollowListLoading(false);
 
     if (followersResult.error || followingResult.error) {
-      setMessage(followersResult.error?.message ?? followingResult.error?.message ?? "Follow list load failed.");
+      setMessage(createErrorMessage(followersResult.error?.message ?? followingResult.error?.message ?? "Follow list load failed."));
       return;
     }
 
@@ -335,6 +392,9 @@ function UserPageContent() {
     const supabase = getSupabaseBrowserClient();
     queueMicrotask(() => {
       void fetchProfileAndPosts(true);
+      void fetchPublicAdminUserIds(supabase)
+        .then((ids) => setAdminUserIds(ids))
+        .catch((error) => setMessage(createErrorMessage(error)));
     });
 
     void supabase.auth.getUser().then(({ data }) => {
@@ -442,6 +502,16 @@ function UserPageContent() {
           void fetchProfileAndPosts(false, user?.id ?? null);
         },
       )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "spotify_presence_cache",
+          filter: `user_id=eq.${profileId}`,
+        },
+        () => void fetchProfileAndPosts(false, user?.id ?? null),
+      )
       ;
 
     if (viewerId) {
@@ -482,7 +552,7 @@ function UserPageContent() {
   const handleToggleFollow = async () => {
     if (!user || !profile || user.id === profile.id) return;
     if (isBlocked) {
-      setMessage("ブロック中のユーザーはフォローできません");
+      setMessage(createErrorMessage("ブロック中のユーザーはフォローできません"));
       return;
     }
     setIsFollowPending(true);
@@ -496,7 +566,7 @@ function UserPageContent() {
         .eq("following_id", profile.id);
 
       if (error) {
-        setMessage(error.message);
+        setMessage(createErrorMessage(error));
         setIsFollowPending(false);
         return;
       }
@@ -512,7 +582,7 @@ function UserPageContent() {
     });
 
     if (error) {
-      setMessage(error.message);
+      setMessage(createErrorMessage(error));
       setIsFollowPending(false);
       return;
     }
@@ -535,11 +605,11 @@ function UserPageContent() {
       setIsBlockPending(false);
 
       if (error) {
-        setMessage(error.message);
+        setMessage(createErrorMessage(error));
         return;
       }
       setIsBlocked(false);
-      setMessage("");
+      setMessage(null);
       return;
     }
 
@@ -550,7 +620,7 @@ function UserPageContent() {
     setIsBlockPending(false);
 
     if (error) {
-      setMessage(error.message);
+      setMessage(createErrorMessage(error));
       return;
     }
 
@@ -562,17 +632,23 @@ function UserPageContent() {
 
     setIsBlocked(true);
     setIsFollowing(false);
-    setMessage("ブロックしました。");
+    setMessage(createSuccessMessage("ブロックしました。"));
   };
 
   const handleSaveProfile = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!isOwnProfile || !profile) return;
 
+    const nextUsername = editUsername.trim().toLowerCase();
     const nextDisplayName = editDisplayName.trim();
     const nextBio = editBio.trim();
+    const nextDisplayFont = normalizeDisplayFontValue(editDisplayFont);
+    if (!USERNAME_PATTERN.test(nextUsername)) {
+      setMessage(createErrorMessage("ユーザー名は3〜20文字の英数字またはアンダースコアで入力してください。"));
+      return;
+    }
     if (!nextDisplayName) {
-      setMessage("Display name is required.");
+      setMessage(createErrorMessage("表示名を入力してください。"));
       return;
     }
 
@@ -592,7 +668,7 @@ function UserPageContent() {
 
       if (uploadError) {
         setIsSavingProfile(false);
-        setMessage(uploadError.message);
+        setMessage(createErrorMessage(uploadError));
         return;
       }
 
@@ -603,8 +679,10 @@ function UserPageContent() {
     const { error } = await supabase
       .from("profiles")
       .update({
+        username: nextUsername,
         display_name: nextDisplayName,
         bio: nextBio,
+        display_font: nextDisplayFont,
         avatar_url: nextAvatarUrl,
         likes_visibility: editLikesVisibility,
       })
@@ -612,16 +690,34 @@ function UserPageContent() {
 
     setIsSavingProfile(false);
     if (error) {
-      setMessage(error.message);
+      if (error.message.includes("username can only be changed once every 24 hours")) {
+        setMessage(createErrorMessage("ユーザー名は24時間に1回だけ変更できます。"));
+      } else {
+        setMessage(createErrorMessage(error));
+      }
       return;
     }
 
     setDisplayName(nextDisplayName);
     setBio(nextBio);
     setEditAvatarFile(null);
-    setProfile({ ...profile, display_name: nextDisplayName, bio: nextBio, avatar_url: nextAvatarUrl, likes_visibility: editLikesVisibility });
+    const updatedProfile = {
+      ...profile,
+      username: nextUsername,
+      display_name: nextDisplayName,
+      bio: nextBio,
+      display_font: nextDisplayFont,
+      avatar_url: nextAvatarUrl,
+      likes_visibility: editLikesVisibility,
+      username_changed_at: nextUsername !== profile.username ? new Date().toISOString() : profile.username_changed_at,
+    };
+    setProfile(updatedProfile);
     setIsEditProfileOpen(false);
-    setMessage("プロフィールを更新しました。");
+    setMessage(createSuccessMessage("プロフィールを更新しました。"));
+    if (nextUsername !== profile.username) {
+      router.replace(`/user/${nextUsername}`);
+      return;
+    }
     void fetchProfileAndPosts(false, user?.id ?? null);
   };
 
@@ -636,7 +732,7 @@ function UserPageContent() {
       setEditAvatarPreview(previewUrl);
       setMessage(null);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "画像の処理に失敗しました。");
+      setMessage(createErrorMessage(error, "画像の処理に失敗しました。"));
       event.target.value = "";
     }
   };
@@ -658,7 +754,7 @@ function UserPageContent() {
       setComposerImages((current) => [...current, ...prepared]);
       setMessage(null);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "画像の準備に失敗しました。");
+      setMessage(createErrorMessage(error, "画像の準備に失敗しました。"));
     } finally {
       event.target.value = "";
     }
@@ -681,7 +777,7 @@ function UserPageContent() {
     const hasImages = composerImages.length > 0;
     if (!quoteTarget && !replyTarget && !content && !hasImages) return;
     if ((quoteTarget || replyTarget) && !content && !hasImages) {
-      setMessage("引用や返信には本文または画像が必要です。");
+      setMessage(createErrorMessage("引用や返信には本文または画像が必要です。"));
       return;
     }
 
@@ -699,7 +795,7 @@ function UserPageContent() {
 
     if (error) {
       setIsPosting(false);
-      setMessage(error.message);
+      setMessage(createErrorMessage(error));
       return;
     }
 
@@ -722,13 +818,13 @@ function UserPageContent() {
         if (imageInsertError) {
           await supabase.from("posts").delete().eq("id", createdPost.id).eq("user_id", user.id);
           setIsPosting(false);
-          setMessage(imageInsertError.message);
+          setMessage(createErrorMessage(imageInsertError));
           return;
         }
       } catch (uploadError) {
         await supabase.from("posts").delete().eq("id", createdPost.id).eq("user_id", user.id);
         setIsPosting(false);
-        setMessage(uploadError instanceof Error ? uploadError.message : "画像アップロードに失敗しました。");
+        setMessage(createErrorMessage(uploadError, "画像アップロードに失敗しました。"));
         return;
       }
     }
@@ -762,7 +858,7 @@ function UserPageContent() {
     const { error } = await request;
 
     setPendingLikePostId(null);
-    if (error) setMessage(error.message);
+    if (error) setMessage(createErrorMessage(error));
   };
 
   const handleToggleRepost = async (post: TimelinePost) => {
@@ -781,7 +877,7 @@ function UserPageContent() {
 
     if (findError) {
       setPendingRepostPostId(null);
-      setMessage(findError.message);
+      setMessage(createErrorMessage(findError));
       return;
     }
 
@@ -798,7 +894,7 @@ function UserPageContent() {
 
     const { error } = await request;
     setPendingRepostPostId(null);
-    if (error) setMessage(error.message);
+    if (error) setMessage(createErrorMessage(error));
   };
 
   const handleToggleReaction = async (post: TimelinePost, emoji: string) => {
@@ -827,7 +923,7 @@ function UserPageContent() {
     const { error } = await request;
 
     setPendingReactionKey(null);
-    if (error) setMessage(error.message);
+    if (error) setMessage(createErrorMessage(error));
   };
 
   const handleDeletePost = async (post: TimelinePost) => {
@@ -835,7 +931,7 @@ function UserPageContent() {
     try {
       await deletePostWithMedia(post.id);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "投稿削除に失敗しました。");
+      setMessage(createErrorMessage(error, "投稿削除に失敗しました。"));
     }
   };
 
@@ -856,16 +952,16 @@ function UserPageContent() {
     });
 
     if (error) {
-      setMessage(error.message);
+      setMessage(createErrorMessage(error));
       return;
     }
-    setMessage("通報しました");
+    setMessage(createSuccessMessage("通報しました"));
   };
 
   const handleSignOut = async () => {
     const supabase = getSupabaseBrowserClient();
     const { error } = await supabase.auth.signOut();
-    if (error) setMessage(error.message);
+    if (error) setMessage(createErrorMessage(error));
   };
 
   const joinedDate = useMemo(() => {
@@ -904,8 +1000,8 @@ function UserPageContent() {
     <div className="relative min-h-screen overflow-hidden bg-background text-foreground">
       <div className="pointer-events-none absolute inset-0 -z-10 bg-[radial-gradient(circle_at_10%_0%,rgba(31,41,55,0.14),transparent_36%),radial-gradient(circle_at_90%_100%,rgba(15,23,42,0.14),transparent_42%)]" />
 
-      <main className="mx-auto flex w-full max-w-[680px] flex-col gap-4 px-5 pb-16 pt-6 sm:px-6">
-        <header className="flex items-center justify-between">
+      <main className="mx-auto flex w-full max-w-[680px] flex-col gap-4 px-5 pb-24 pt-4 sm:px-6">
+        <header className="sticky top-0 z-30 -mx-5 flex items-center justify-between border-b border-border/80 bg-background/90 px-5 pb-3 pt-1 backdrop-blur sm:-mx-6 sm:px-6">
           <div className="flex items-center gap-2">
             <Button asChild variant="ghost" size="sm">
               <Link href="/">
@@ -917,7 +1013,8 @@ function UserPageContent() {
           </div>
 
           <div className="flex items-center gap-1 sm:gap-2">
-            {user ? <NotificationBell userId={user.id} /> : null}
+            <AnnouncementDialog />
+            <div className="hidden sm:block">{user ? <NotificationBell userId={user.id} /> : null}</div>
             {user ? (
               <>
                 <div className="sm:hidden">
@@ -925,6 +1022,7 @@ function UserPageContent() {
                 </div>
                 <div className="hidden items-center gap-1 sm:flex">
                   <ModeToggle />
+                  <AdminNavButton userId={user.id} />
                   <Button variant="ghost" size="sm" onClick={handleSignOut}>
                     <LogOut className="size-4" />
                     <span>ログアウト</span>
@@ -942,11 +1040,7 @@ function UserPageContent() {
           </div>
         </header>
 
-        {message ? (
-          <p className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
-            {message}
-          </p>
-        ) : null}
+        <AppMessageBanner message={message} className="text-xs" />
 
         {isLoading ? (
           <div className="border-b border-border/80 px-3 py-5">
@@ -960,6 +1054,14 @@ function UserPageContent() {
           </div>
         ) : (
           <>
+            {!isOwnProfile && profileFrozenUntil ? (
+              <section className="border-b border-border/80 bg-amber-500/8 px-3 py-3">
+                <div className="rounded-xl border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-sm text-amber-900 dark:text-amber-200">
+                  このユーザーは凍結されています。
+                </div>
+              </section>
+            ) : null}
+
             <section className="border-b border-border/80 px-3 py-5">
               <div className="mb-3 flex items-center justify-between gap-3">
                 <div className="flex items-center gap-3">
@@ -977,8 +1079,13 @@ function UserPageContent() {
                     </div>
                   )}
                   <div>
-                    <p className="text-base font-semibold">
-                      {profile.display_name}
+                    <p className="text-base">
+                      <ProfileDisplayName
+                        name={profile.display_name}
+                        font={profile.display_font}
+                        isAdmin={adminUserIds.has(profile.id)}
+                        textClassName="font-semibold"
+                      />
                     </p>
                     <p className="text-sm text-muted-foreground">
                       @{profile.username}
@@ -1022,6 +1129,11 @@ function UserPageContent() {
                 text={profile.bio || "まだ自己紹介はありません。"}
                 className="text-sm text-muted-foreground"
               />
+              {spotifyPresence ? (
+                <div className="mt-4">
+                  <SpotifyWidget presence={spotifyPresence} />
+                </div>
+              ) : null}
               <p className="mt-3 text-xs text-muted-foreground">
                 {joinedDate} に参加
               </p>
@@ -1117,101 +1229,155 @@ function UserPageContent() {
                   onOpenChange={(nextOpen) => {
                     setIsEditProfileOpen(nextOpen);
                     if (nextOpen) {
+                      setEditUsername(profile.username);
                       setEditDisplayName(displayName);
                       setEditBio(bio);
+                      setEditDisplayFont(normalizeDisplayFontValue(profile.display_font));
                       setEditAvatarFile(null);
                       setEditAvatarPreview(profile.avatar_url);
                       setEditLikesVisibility((profile.likes_visibility as "public" | "private") ?? "public");
                     }
                   }}
                 >
-                  <DialogTrigger asChild>
-                    <Button variant="outline">プロフィール編集</Button>
-                  </DialogTrigger>
-                  <DialogContent>
-                    <form onSubmit={handleSaveProfile} className="space-y-4">
-                      <DialogHeader>
+                  <div className="mb-3 flex flex-wrap gap-2">
+                    <DialogTrigger asChild>
+                      <Button variant="outline">プロフィール編集</Button>
+                    </DialogTrigger>
+                    <Button asChild variant="ghost">
+                      <Link href="/connections">接続</Link>
+                    </Button>
+                  </div>
+                  <DialogContent className="flex max-h-[min(88dvh,44rem)] flex-col overflow-hidden">
+                    <form onSubmit={handleSaveProfile} className="flex min-h-0 flex-1 flex-col gap-4">
+                      <DialogHeader className="shrink-0">
                         <DialogTitle>プロフィールを編集</DialogTitle>
                         <DialogDescription>
-                          表示名と自己紹介を更新できます。変更は Supabase に保存されます。
+                          ユーザー名、表示名、自己紹介、アイコンを更新できます。変更は Supabase に保存されます。
                         </DialogDescription>
                       </DialogHeader>
 
-                      <div className="space-y-1">
-                        <p className="text-sm font-medium">アイコン</p>
-                        <div className="flex items-center gap-3">
-                          {editAvatarPreview ? (
-                            <Image
-                              src={editAvatarPreview}
-                              alt="アイコンのプレビュー"
-                              width={56}
-                              height={56}
-                              className="size-14 rounded-full border border-border/70 object-cover"
-                            />
-                          ) : (
-                            <div className="grid size-14 place-items-center rounded-full border border-border/70 bg-muted/40 text-lg font-semibold">
-                              {profile.display_name.slice(0, 1).toUpperCase()}
+                      <div className="min-h-0 flex-1 space-y-4 overflow-y-auto pr-1">
+                        <div className="space-y-1">
+                          <p className="text-sm font-medium">ユーザー名</p>
+                          <Input
+                            value={editUsername}
+                            onChange={(event) =>
+                              setEditUsername(event.target.value.replace(/\s+/g, ""))
+                            }
+                            maxLength={20}
+                            required
+                          />
+                          <p className="text-xs text-muted-foreground">
+                            英数字とアンダースコアのみ使用できます。{formatUsernameResetAt(profile.username_changed_at)}
+                          </p>
+                        </div>
+
+                        <div className="space-y-1">
+                          <p className="text-sm font-medium">アイコン</p>
+                          <div className="flex items-center gap-3">
+                            {editAvatarPreview ? (
+                              <Image
+                                src={editAvatarPreview}
+                                alt="アイコンのプレビュー"
+                                width={56}
+                                height={56}
+                                className="size-14 rounded-full border border-border/70 object-cover"
+                              />
+                            ) : (
+                              <div className="grid size-14 place-items-center rounded-full border border-border/70 bg-muted/40 text-lg font-semibold">
+                                {profile.display_name.slice(0, 1).toUpperCase()}
+                              </div>
+                            )}
+                            <div className="flex-1">
+                              <Input
+                                type="file"
+                                accept="image/png,image/jpeg,image/heic,image/heif,.heic,.heif"
+                                onChange={handleAvatarSelect}
+                                className="cursor-pointer"
+                              />
+                              <p className="mt-1 text-xs text-muted-foreground">
+                                PNG / JPG / HEIC / HEIF に対応。アップロード前に WebP へ変換し、80KB 以下に圧縮します。
+                              </p>
                             </div>
-                          )}
-                          <div className="flex-1">
-                            <Input
-                              type="file"
-                              accept="image/png,image/jpeg,image/heic,image/heif,.heic,.heif"
-                              onChange={handleAvatarSelect}
-                              className="cursor-pointer"
+                          </div>
+                        </div>
+
+                        <div className="space-y-1">
+                          <p className="text-sm font-medium">表示名</p>
+                          <Input
+                            value={editDisplayName}
+                            onChange={(event) =>
+                              setEditDisplayName(event.target.value)
+                            }
+                            maxLength={50}
+                            required
+                          />
+                        </div>
+
+                        <div className="space-y-1">
+                          <p className="text-sm font-medium">表示名フォント</p>
+                          <Select
+                            value={editDisplayFont}
+                            onValueChange={(value) => setEditDisplayFont(value as DisplayFontValue)}
+                          >
+                            <SelectTrigger className="w-full">
+                              <SelectValue placeholder="フォントを選択" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {DISPLAY_FONT_OPTIONS.map((option) => (
+                                <SelectItem key={option.value} value={option.value}>
+                                  {option.label}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <p className="text-xs text-muted-foreground">
+                            現在の設定: {getDisplayFontLabel(editDisplayFont)}
+                          </p>
+                          <div className="rounded-xl border border-border/70 bg-muted/20 px-3 py-2 text-sm">
+                            <ProfileDisplayName
+                              name={editDisplayName || "表示名プレビュー"}
+                              font={editDisplayFont}
+                              isAdmin={adminUserIds.has(profile.id)}
+                              textClassName="font-medium"
                             />
-                            <p className="mt-1 text-xs text-muted-foreground">
-                              PNG / JPG / HEIC / HEIF に対応。アップロード前に WebP へ変換し、80KB 以下に圧縮します。
-                            </p>
+                          </div>
+                        </div>
+
+                        <div className="space-y-1">
+                          <p className="text-sm font-medium">自己紹介</p>
+                          <Textarea
+                            value={editBio}
+                            onChange={(event) => setEditBio(event.target.value)}
+                            maxLength={280}
+                            placeholder="自己紹介を書く"
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <p className="text-sm font-medium">いいね表示設定</p>
+                          <div className="flex gap-2">
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant={editLikesVisibility === "public" ? "default" : "outline"}
+                              onClick={() => setEditLikesVisibility("public")}
+                            >
+                              公開
+                            </Button>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant={editLikesVisibility === "private" ? "default" : "outline"}
+                              onClick={() => setEditLikesVisibility("private")}
+                            >
+                              自分のみ
+                            </Button>
                           </div>
                         </div>
                       </div>
 
-                      <div className="space-y-1">
-                        <p className="text-sm font-medium">表示名</p>
-                        <Input
-                          value={editDisplayName}
-                          onChange={(event) =>
-                            setEditDisplayName(event.target.value)
-                          }
-                          maxLength={50}
-                          required
-                        />
-                      </div>
-
-                      <div className="space-y-1">
-                        <p className="text-sm font-medium">自己紹介</p>
-                        <Textarea
-                          value={editBio}
-                          onChange={(event) => setEditBio(event.target.value)}
-                          maxLength={280}
-                          placeholder="自己紹介を書く"
-                        />
-                      </div>
-
-                      <div className="space-y-2">
-                        <p className="text-sm font-medium">いいね表示設定</p>
-                        <div className="flex gap-2">
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant={editLikesVisibility === "public" ? "default" : "outline"}
-                            onClick={() => setEditLikesVisibility("public")}
-                          >
-                            公開
-                          </Button>
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant={editLikesVisibility === "private" ? "default" : "outline"}
-                            onClick={() => setEditLikesVisibility("private")}
-                          >
-                            自分のみ
-                          </Button>
-                        </div>
-                      </div>
-
-                      <DialogFooter>
+                      <DialogFooter className="shrink-0">
                         <Button
                           type="button"
                           variant="outline"
@@ -1393,7 +1559,7 @@ function UserPageContent() {
                         onToggleLike={handleToggleLike}
                         onStartReply={(target) => {
                           if (!isOwnProfile) {
-                            setMessage("プロフィールからの返信は本人ページでのみ行えます。");
+                            setMessage(createErrorMessage("プロフィールからの返信は本人ページでのみ行えます。"));
                             return;
                           }
                           setReplyTarget(target);
@@ -1402,9 +1568,7 @@ function UserPageContent() {
                         onToggleRepost={handleToggleRepost}
                         onStartQuote={(target) => {
                           if (!isOwnProfile) {
-                            setMessage(
-                              "プロフィールからの引用は本人ページでのみ行えます。",
-                            );
+                            setMessage(createErrorMessage("プロフィールからの引用は本人ページでのみ行えます。"));
                             return;
                           }
                           setQuoteTarget(target);
@@ -1413,11 +1577,12 @@ function UserPageContent() {
                         onToggleReaction={handleToggleReaction}
                         onDeletePost={handleDeletePost}
                         onReportPost={handleReportPost}
-                        pendingLikePostId={pendingLikePostId}
-                        pendingRepostPostId={pendingRepostPostId}
-                        pendingReactionKey={pendingReactionKey}
-                        repostCount={repostCountMap.get(post.id) ?? 0}
-                      />
+                          pendingLikePostId={pendingLikePostId}
+                          pendingRepostPostId={pendingRepostPostId}
+                          pendingReactionKey={pendingReactionKey}
+                          repostCount={repostCountMap.get(post.id) ?? 0}
+                          adminUserIds={adminUserIds}
+                        />
                     </motion.div>
                   ))}
                 </AnimatePresence>
@@ -1426,6 +1591,7 @@ function UserPageContent() {
           </>
         )}
       </main>
+      <MobileBottomNav userId={user?.id ?? null} profileUsername={isOwnProfile ? profile?.username ?? null : null} />
     </div>
   );
 }
@@ -1443,5 +1609,6 @@ export default function UserPage() {
     </Suspense>
   );
 }
+
 
 

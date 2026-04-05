@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useState } from "react"
 
 import { Bell } from "lucide-react"
 
+import { AppMessageBanner, createErrorMessage, type AppMessage } from "@/components/app-message"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -20,7 +21,7 @@ import type { ProfileLite } from "@/lib/post-types"
 
 type NotificationItem = {
   id: string
-  type: "like" | "reaction" | "follow"
+  type: "like" | "reaction" | "follow" | "reply"
   post_id: string | null
   reaction_emoji: string | null
   is_read: boolean
@@ -46,6 +47,7 @@ function renderMessage(item: NotificationItem) {
   const actorName = item.actor?.display_name ?? item.actor?.username ?? "だれか"
   if (item.type === "like") return `${actorName}さんがあなたの投稿にいいねしました`
   if (item.type === "follow") return `${actorName}さんがあなたをフォローしました`
+  if (item.type === "reply") return `${actorName}さんがあなたの投稿に返信しました`
   return `${actorName}さんがあなたの投稿にリアクションしました`
 }
 
@@ -61,7 +63,7 @@ export function NotificationBell({ userId }: NotificationBellProps) {
   const [open, setOpen] = useState(false)
   const [items, setItems] = useState<NotificationItem[]>([])
   const [unreadCount, setUnreadCount] = useState(0)
-  const [errorMessage, setErrorMessage] = useState<string | null>(null)
+  const [errorMessage, setErrorMessage] = useState<AppMessage | null>(null)
 
   const fetchNotifications = useCallback(async () => {
     const supabase = getSupabaseBrowserClient()
@@ -80,7 +82,8 @@ export function NotificationBell({ userId }: NotificationBellProps) {
               id,
               username,
               display_name,
-              avatar_url
+              avatar_url,
+              display_font
             )
           `,
         )
@@ -95,11 +98,11 @@ export function NotificationBell({ userId }: NotificationBellProps) {
     ])
 
     if (listResult.error) {
-      setErrorMessage(listResult.error.message)
+      setErrorMessage(createErrorMessage(listResult.error))
       return
     }
     if (countResult.error) {
-      setErrorMessage(countResult.error.message)
+      setErrorMessage(createErrorMessage(countResult.error))
       return
     }
 
@@ -148,7 +151,7 @@ export function NotificationBell({ userId }: NotificationBellProps) {
       .eq("is_read", false)
 
     if (error) {
-      setErrorMessage(error.message)
+      setErrorMessage(createErrorMessage(error))
       return
     }
 
@@ -176,7 +179,7 @@ export function NotificationBell({ userId }: NotificationBellProps) {
         <DropdownMenuLabel>通知</DropdownMenuLabel>
         <DropdownMenuSeparator />
         {errorMessage ? (
-          <div className="px-2 py-2 text-xs text-destructive">{errorMessage}</div>
+          <AppMessageBanner message={errorMessage} className="mx-2 my-2 text-xs" />
         ) : sorted.length === 0 ? (
           <div className="px-2 py-6 text-center text-xs text-muted-foreground">通知はありません</div>
         ) : (

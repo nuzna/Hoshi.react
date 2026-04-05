@@ -2,7 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js"
 
 import type { Database } from "@/lib/supabase/types"
 
-export type NotificationType = "like" | "reaction" | "follow"
+export type NotificationType = "like" | "reaction" | "follow" | "reply"
 
 type BaseNotificationPayload = {
   supabase: SupabaseClient<Database>
@@ -18,7 +18,7 @@ type NotificationPayload = BaseNotificationPayload & {
 
 function buildOnConflict(type: NotificationType) {
   if (type === "follow") return "recipient_id,actor_id,type"
-  if (type === "like") return "recipient_id,actor_id,type,post_id"
+  if (type === "like" || type === "reply") return "recipient_id,actor_id,type,post_id"
   return "recipient_id,actor_id,type,post_id,reaction_emoji"
 }
 
@@ -66,7 +66,7 @@ export async function deleteNotification({
   if (type === "follow") {
     query = query.is("post_id", null).is("reaction_emoji", null)
   }
-  if (type === "like") {
+  if (type === "like" || type === "reply") {
     if (!postId) return
     query = query.eq("post_id", postId)
   }

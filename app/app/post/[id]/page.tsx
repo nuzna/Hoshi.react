@@ -7,13 +7,18 @@ import { Suspense, useCallback, useEffect, useRef, useState, type ChangeEvent } 
 import type { User } from "@supabase/supabase-js"
 import { ArrowLeft, ImagePlus, LogOut, Send, X } from "lucide-react"
 
+import { AdminNavButton } from "@/components/admin-nav-button"
+import { AnnouncementDialog } from "@/components/announcement-dialog"
+import { AppMessageBanner, createErrorMessage, createSuccessMessage, type AppMessage } from "@/components/app-message"
 import { ModeToggle } from "@/components/mode-toggle"
+import { MobileBottomNav } from "@/components/mobile-bottom-nav"
 import { MobileUserMenu } from "@/components/mobile-user-menu"
 import { NotificationBell } from "@/components/notification-bell"
 import { PostCard } from "@/components/post-card"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Textarea } from "@/components/ui/textarea"
+import { fetchPublicAdminUserIds } from "@/lib/admin-users"
 import { deletePostWithMedia } from "@/lib/post-delete"
 import {
   preparePostImageSelection,
@@ -30,7 +35,9 @@ function PostDetailContent() {
   const postId = params?.id ?? ""
 
   const [user, setUser] = useState<User | null>(null)
+  const [adminUserIds, setAdminUserIds] = useState<Set<string>>(new Set())
   const [post, setPost] = useState<TimelinePost | null>(null)
+  const [replySourcePost, setReplySourcePost] = useState<TimelinePost | null>(null)
   const [replies, setReplies] = useState<TimelinePost[]>([])
   const [repostCount, setRepostCount] = useState(0)
   const [replyRepostCounts, setReplyRepostCounts] = useState<Record<string, number>>({})
@@ -43,7 +50,7 @@ function PostDetailContent() {
   const [pendingLikePostId, setPendingLikePostId] = useState<string | null>(null)
   const [pendingRepostPostId, setPendingRepostPostId] = useState<string | null>(null)
   const [pendingReactionKey, setPendingReactionKey] = useState<string | null>(null)
-  const [message, setMessage] = useState<string | null>(null)
+  const [message, setMessage] = useState<AppMessage | null>(null)
   const composerFileInputRef = useRef<HTMLInputElement | null>(null)
 
   const fetchPost = useCallback(async () => {
@@ -57,7 +64,7 @@ function PostDetailContent() {
       .maybeSingle()
 
     if (error) {
-      setMessage(error.message)
+      setMessage(createErrorMessage(error))
       setPost(null)
       setIsLoading(false)
       return
@@ -65,14 +72,31 @@ function PostDetailContent() {
 
     const basePost = (data ?? null) as TimelinePost | null
     if (basePost) {
-      const [hydrated] = await hydratePostsRelations(supabase, [basePost])
+      const rowsToHydrate: TimelinePost[] = [basePost]
+
+      if (basePost.reply_to_id) {
+        const { data: replySourceData } = await supabase
+          .from("posts")
+          .select(POST_SELECT_QUERY)
+          .eq("id", basePost.reply_to_id)
+          .maybeSingle()
+
+        if (replySourceData) {
+          rowsToHydrate.push(replySourceData as TimelinePost)
+        }
+      }
+
+      const [hydrated, hydratedReplySource] = await hydratePostsRelations(supabase, rowsToHydrate)
       setPost(hydrated ?? null)
+      setReplySourcePost(hydratedReplySource ?? null)
     } else {
       setPost(null)
+      setReplySourcePost(null)
     }
 
     if (!data) {
       setRepostCount(0)
+      setReplySourcePost(null)
       setIsLoading(false)
       return
     }
@@ -97,7 +121,7 @@ function PostDetailContent() {
       .order("created_at", { ascending: true })
 
     if (error) {
-      setMessage(error.message)
+      setMessage(createErrorMessage(error))
       setReplies([])
       setReplyRepostCounts({})
       return
@@ -137,6 +161,9 @@ function PostDetailContent() {
 
     queueMicrotask(() => {
       void Promise.all([fetchPost(), fetchReplies()])
+      void fetchPublicAdminUserIds(supabase)
+        .then((ids) => setAdminUserIds(ids))
+        .catch((error) => setMessage(createErrorMessage(error)))
     })
     void supabase.auth.getUser().then(({ data }) => setUser(data.user))
 
@@ -198,7 +225,7 @@ function PostDetailContent() {
       setComposerImages((current) => [...current, ...prepared])
       setMessage(null)
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "画像の準備に失敗しました。")
+      setMessage(createErrorMessage(error, "画像の準備に失敗しました。"))
     } finally {
       event.target.value = ""
     }
@@ -224,7 +251,7 @@ function PostDetailContent() {
     const content = composerText.trim()
     const hasImages = composerImages.length > 0
     if (!content && !hasImages) {
-      setMessage("引用や返信には本文または画像が必要です。")
+      setMessage(createErrorMessage("引用や返信には本文または画像が必要です。"))
       return
     }
 
@@ -239,7 +266,7 @@ function PostDetailContent() {
     const { data: createdPost, error } = await supabase.from("posts").insert(payload).select("id").single()
     if (error) {
       setIsPosting(false)
-      setMessage(error.message)
+      setMessage(createErrorMessage(error))
       return
     }
 
@@ -262,13 +289,13 @@ function PostDetailContent() {
         if (imageInsertError) {
           await supabase.from("posts").delete().eq("id", createdPost.id).eq("user_id", user.id)
           setIsPosting(false)
-          setMessage(imageInsertError.message)
+          setMessage(createErrorMessage(imageInsertError))
           return
         }
       } catch (uploadError) {
         await supabase.from("posts").delete().eq("id", createdPost.id).eq("user_id", user.id)
         setIsPosting(false)
-        setMessage(uploadError instanceof Error ? uploadError.message : "画像アップロードに失敗しました。")
+        setMessage(createErrorMessage(uploadError, "画像アップロードに失敗しました。"))
         return
       }
     }
@@ -298,7 +325,7 @@ function PostDetailContent() {
     const { error } = await request
 
     setPendingLikePostId(null)
-    if (error) setMessage(error.message)
+    if (error) setMessage(createErrorMessage(error))
   }
 
   const handleToggleRepost = async (targetPost: TimelinePost) => {
@@ -321,7 +348,7 @@ function PostDetailContent() {
 
     if (findError) {
       setPendingRepostPostId(null)
-      setMessage(findError.message)
+      setMessage(createErrorMessage(findError))
       return
     }
 
@@ -332,7 +359,7 @@ function PostDetailContent() {
 
     const { error } = await request
     setPendingRepostPostId(null)
-    if (error) setMessage(error.message)
+    if (error) setMessage(createErrorMessage(error))
   }
 
   const handleToggleReaction = async (targetPost: TimelinePost, emoji: string) => {
@@ -362,7 +389,7 @@ function PostDetailContent() {
     const { error } = await request
 
     setPendingReactionKey(null)
-    if (error) setMessage(error.message)
+    if (error) setMessage(createErrorMessage(error))
   }
 
   const handleDeletePost = async (targetPost: TimelinePost) => {
@@ -371,7 +398,7 @@ function PostDetailContent() {
     try {
       await deletePostWithMedia(targetPost.id)
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "投稿削除に失敗しました。")
+      setMessage(createErrorMessage(error, "投稿削除に失敗しました。"))
     }
   }
 
@@ -391,26 +418,24 @@ function PostDetailContent() {
     })
 
     if (error) {
-      setMessage(error.message)
+      setMessage(createErrorMessage(error))
       return
     }
-    setMessage("通報しました。ご協力ありがとうございます。")
+    setMessage(createSuccessMessage("通報しました。ご協力ありがとうございます。"))
   }
 
   const handleSignOut = async () => {
     const supabase = getSupabaseBrowserClient()
     const { error } = await supabase.auth.signOut()
-    if (error) setMessage(error.message)
+    if (error) setMessage(createErrorMessage(error))
   }
 
   return (
-    <div className="relative min-h-screen overflow-hidden bg-background text-foreground">
-      <div className="pointer-events-none absolute inset-0 -z-10 bg-[radial-gradient(circle_at_10%_0%,rgba(31,41,55,0.14),transparent_36%),radial-gradient(circle_at_90%_100%,rgba(15,23,42,0.14),transparent_42%)]" />
-
-      <main className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-4 pb-16 pt-6 sm:px-6 lg:px-8">
-        <header className="flex items-center justify-between">
+    <div className="min-h-screen bg-background text-foreground">
+      <main className="mx-auto flex w-full max-w-[680px] flex-col px-5 pb-24 pt-4 sm:px-6">
+        <header className="sticky top-0 z-30 -mx-5 mb-2 flex items-center justify-between border-b border-border/80 bg-background/90 px-5 pb-3 pt-1 backdrop-blur sm:-mx-6 sm:px-6">
           <div className="flex items-center gap-2">
-            <Button asChild variant="outline" size="sm">
+            <Button asChild variant="ghost" size="sm">
               <Link href="/">
                 <ArrowLeft className="size-4" />
                 タイムライン
@@ -420,7 +445,8 @@ function PostDetailContent() {
           </div>
 
           <div className="flex items-center gap-1 sm:gap-2">
-            {user ? <NotificationBell userId={user.id} /> : null}
+            <AnnouncementDialog />
+            <div className="hidden sm:block">{user ? <NotificationBell userId={user.id} /> : null}</div>
             {user ? (
               <>
                 <div className="sm:hidden">
@@ -428,7 +454,8 @@ function PostDetailContent() {
                 </div>
                 <div className="hidden items-center gap-2 sm:flex">
                   <ModeToggle />
-                  <Button variant="outline" size="sm" onClick={handleSignOut}>
+                  <AdminNavButton userId={user.id} />
+                  <Button variant="ghost" size="sm" onClick={handleSignOut}>
                     <LogOut className="size-4" />
                     <span>ログアウト</span>
                   </Button>
@@ -437,7 +464,7 @@ function PostDetailContent() {
             ) : (
               <>
                 <ModeToggle />
-                <Button asChild variant="outline" size="sm">
+                <Button asChild variant="ghost" size="sm">
                   <Link href="/login">ログイン</Link>
                 </Button>
               </>
@@ -445,31 +472,55 @@ function PostDetailContent() {
           </div>
         </header>
 
-        {message ? (
-          <p className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
-            {message}
-          </p>
-        ) : null}
+        <AppMessageBanner message={message} className="mt-3 text-xs" />
 
         {isLoading ? (
-          <div className="rounded-2xl border border-border/80 bg-card/80 p-5">
+          <div className="border-b border-border/80 px-3 py-5">
             <Skeleton className="mb-2 h-3 w-40" />
             <Skeleton className="mb-2 h-3 w-full" />
             <Skeleton className="h-3 w-9/12" />
           </div>
         ) : !post ? (
-          <div className="rounded-2xl border border-dashed border-border p-8 text-center text-sm text-muted-foreground">
+          <div className="border-b border-dashed border-border px-4 py-10 text-center text-sm text-muted-foreground">
             投稿が見つかりませんでした。
           </div>
         ) : (
           <>
-            <section className="rounded-2xl border border-border/80 bg-card/90 p-4">
-              <p className="mb-3 text-xs text-muted-foreground">
-                URL:{" "}
+            {replySourcePost ? (
+              <section className="border-b border-border/80">
+                <div className="px-3 py-2 text-xs text-muted-foreground sm:px-4">返信元の投稿</div>
+                <PostCard
+                  post={replySourcePost}
+                  currentUserId={user?.id ?? null}
+                  onToggleLike={handleToggleLike}
+                  onStartReply={(target) => {
+                    setReplyTarget(target)
+                    setQuoteTarget(null)
+                  }}
+                  onToggleRepost={handleToggleRepost}
+                  onStartQuote={(target) => {
+                    setQuoteTarget(target)
+                    setReplyTarget(null)
+                  }}
+                  onToggleReaction={handleToggleReaction}
+                  onDeletePost={handleDeletePost}
+                  onReportPost={handleReportPost}
+                  pendingLikePostId={pendingLikePostId}
+                  pendingRepostPostId={pendingRepostPostId}
+                  pendingReactionKey={pendingReactionKey}
+                  repostCount={0}
+                  adminUserIds={adminUserIds}
+                />
+              </section>
+            ) : null}
+
+            <section className="border-b border-border/80">
+              <div className="px-3 py-2 text-xs text-muted-foreground sm:px-4">
+                <span className="mr-2">この投稿</span>
                 <Link href={`/post/${post.id}`} className="underline underline-offset-2">
                   /post/{post.id}
                 </Link>
-              </p>
+              </div>
               <PostCard
                 post={post}
                 currentUserId={user?.id ?? null}
@@ -490,18 +541,19 @@ function PostDetailContent() {
                 pendingRepostPostId={pendingRepostPostId}
                 pendingReactionKey={pendingReactionKey}
                 repostCount={repostCount}
+                adminUserIds={adminUserIds}
               />
             </section>
 
-            <section className="rounded-2xl border border-border/80 bg-card/90 p-4">
-              <div className="mb-3 flex items-center justify-between">
+            <section className="border-b border-border/80">
+              <div className="flex items-center justify-between px-3 py-3 sm:px-4">
                 <h2 className="text-sm font-medium">この投稿への返信</h2>
                 <p className="text-xs text-muted-foreground">{replies.length}件</p>
               </div>
 
-              <div className="space-y-3">
+              <div>
                 {replies.length === 0 ? (
-                  <div className="rounded-xl border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
+                  <div className="px-4 py-10 text-center text-sm text-muted-foreground">
                     まだ返信はありません
                   </div>
                 ) : (
@@ -527,6 +579,7 @@ function PostDetailContent() {
                       pendingRepostPostId={pendingRepostPostId}
                       pendingReactionKey={pendingReactionKey}
                       repostCount={replyRepostCounts[reply.id] ?? 0}
+                      adminUserIds={adminUserIds}
                     />
                   ))
                 )}
@@ -534,7 +587,7 @@ function PostDetailContent() {
             </section>
 
             {quoteTarget || replyTarget ? (
-              <section className="rounded-3xl border border-border/80 bg-background px-3 py-3">
+              <section className="mt-4 rounded-3xl border border-border/80 bg-background px-3 py-3">
                 <p className="mb-2 text-sm font-medium">{quoteTarget ? "この投稿を引用" : "この投稿に返信"}</p>
                 {composerImages.length > 0 ? (
                   <div className="mb-2 flex gap-2 overflow-x-auto pb-1">
@@ -613,6 +666,7 @@ function PostDetailContent() {
           </>
         )}
       </main>
+      <MobileBottomNav userId={user?.id ?? null} />
     </div>
   )
 }

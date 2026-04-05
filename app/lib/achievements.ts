@@ -59,7 +59,7 @@ export const ACHIEVEMENT_DEFINITIONS: AchievementDefinition[] = [
   {
     id: "LOM",
     emoji: "📝",
-    name: "LOM専卒業",
+    name: "ROM専卒業",
     description: "初めての投稿をする",
     rarity: "bronze",
     condition: { metric: "posts_count", gte: 1 },
