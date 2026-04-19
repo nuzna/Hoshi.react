@@ -15,6 +15,7 @@ import { MobileBottomNav } from "@/components/mobile-bottom-nav"
 import { ModeToggle } from "@/components/mode-toggle"
 import { MobileUserMenu } from "@/components/mobile-user-menu"
 import { NotificationBell } from "@/components/notification-bell"
+import { PixelCodeSolid, PixelMessageDotsSolid } from "@/components/pixel-icons"
 import { PostCard } from "@/components/post-card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -23,6 +24,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
 import { ACHIEVEMENT_DEFINITIONS } from "@/lib/achievements"
 import { fetchPublicAdminUserIds } from "@/lib/admin-users"
+import { guildFeatureEnabled } from "@/lib/guild-config"
+import { collectPostUserIds, fetchCurrentUserGuild, fetchGuildDisplayMap, getSingleGuild, type GuildDisplay, type GuildMembershipWithGuild } from "@/lib/guilds"
 import { deletePostWithMedia } from "@/lib/post-delete"
 import {
   preparePostImageSelection,
@@ -71,6 +74,8 @@ export default function Home() {
   const [user, setUser] = useState<User | null>(null)
   const [myProfile, setMyProfile] = useState<ProfileLite | null>(null)
   const [adminUserIds, setAdminUserIds] = useState<Set<string>>(new Set())
+  const [guildDisplayMap, setGuildDisplayMap] = useState<Map<string, GuildDisplay>>(new Map())
+  const [myGuildMembership, setMyGuildMembership] = useState<GuildMembershipWithGuild | null>(null)
   const [posts, setPosts] = useState<TimelinePost[]>([])
   const [timelineTab, setTimelineTab] = useState<TimelineTab>("latest")
   const [followingIds, setFollowingIds] = useState<string[]>([])
@@ -116,6 +121,15 @@ export default function Home() {
     setFollowingIds((data ?? []).map((row) => row.following_id))
   }, [])
 
+  const fetchMyGuild = useCallback(async (userId: string) => {
+    const supabase = getSupabaseBrowserClient()
+    try {
+      setMyGuildMembership(await fetchCurrentUserGuild(supabase, userId))
+    } catch (error) {
+      setMessage(createErrorMessage(error))
+    }
+  }, [])
+
   const fetchPosts = useCallback(async () => {
     const supabase = getSupabaseBrowserClient()
     const { data, error } = await supabase
@@ -134,6 +148,11 @@ export default function Home() {
     const baseRows = (data ?? []) as TimelinePost[]
     const hydratedRows = await hydratePostsRelations(supabase, baseRows)
     setPosts(hydratedRows)
+    try {
+      setGuildDisplayMap(await fetchGuildDisplayMap(supabase, collectPostUserIds(hydratedRows)))
+    } catch {
+      setGuildDisplayMap(new Map())
+    }
     setIsLoading(false)
   }, [])
 
@@ -153,7 +172,14 @@ export default function Home() {
         return
       }
       setUser(data.user)
-      if (data.user) void fetchMyProfile(data.user.id)
+      if (data.user) {
+        void fetchMyProfile(data.user.id)
+        if (guildFeatureEnabled) {
+          void fetchMyGuild(data.user.id)
+        } else {
+          setMyGuildMembership(null)
+        }
+      }
     })
 
     const {
@@ -163,8 +189,14 @@ export default function Home() {
       setUser(authUser)
       if (authUser) {
         void fetchMyProfile(authUser.id)
+        if (guildFeatureEnabled) {
+          void fetchMyGuild(authUser.id)
+        } else {
+          setMyGuildMembership(null)
+        }
       } else {
         setMyProfile(null)
+        setMyGuildMembership(null)
       }
     })
 
@@ -181,7 +213,7 @@ export default function Home() {
       subscription.unsubscribe()
       void supabase.removeChannel(channel)
     }
-  }, [fetchMyProfile, fetchPosts])
+  }, [fetchMyGuild, fetchMyProfile, fetchPosts])
 
   useEffect(() => {
     if (!user) {
@@ -530,6 +562,8 @@ export default function Home() {
     })
   }, [searchKeyword])
 
+  const currentGuild = getSingleGuild(myGuildMembership?.guilds)
+
   return (
     <div className="min-h-screen bg-background text-foreground">
       <motion.header
@@ -547,6 +581,20 @@ export default function Home() {
           <div className="flex items-center gap-1.5 sm:gap-2">
             <AnnouncementDialog />
             <div className="hidden sm:block">{user ? <NotificationBell userId={user.id} /> : null}</div>
+            {user && guildFeatureEnabled ? (
+              <Button asChild variant="ghost" size="icon-sm" className="sm:hidden">
+                <Link href={currentGuild ? `/guild/${currentGuild.name}` : "/guild"} aria-label="ギルド">
+                  <PixelCodeSolid className="size-4" />
+                </Link>
+              </Button>
+            ) : null}
+            {user && guildFeatureEnabled && currentGuild ? (
+              <Button asChild variant="ghost" size="icon-sm" className="sm:hidden">
+                <Link href={`/guild/${currentGuild.name}/chat`} aria-label="ギルドチャット">
+                  <PixelMessageDotsSolid className="size-4" />
+                </Link>
+              </Button>
+            ) : null}
             {user ? (
               <>
                 <div className="sm:hidden">
@@ -555,6 +603,22 @@ export default function Home() {
                 <div className="hidden items-center gap-1 sm:flex">
                   <ModeToggle />
                   <AdminNavButton userId={user.id} />
+                  {guildFeatureEnabled ? (
+                    <Button asChild variant="ghost" size="sm" className="gap-2">
+                      <Link href={currentGuild ? `/guild/${currentGuild.name}` : "/guild"}>
+                        <PixelCodeSolid className="size-4" />
+                        ギルド
+                      </Link>
+                    </Button>
+                  ) : null}
+                  {guildFeatureEnabled && currentGuild ? (
+                    <Button asChild variant="ghost" size="sm" className="gap-2">
+                      <Link href={`/guild/${currentGuild.name}/chat`}>
+                        <PixelMessageDotsSolid className="size-4" />
+                        チャット
+                      </Link>
+                    </Button>
+                  ) : null}
                   {myProfile ? (
                     <Button asChild variant="ghost" size="sm">
                       <Link href={`/user/${myProfile.username}`}>プロフィール</Link>
@@ -619,11 +683,39 @@ export default function Home() {
         <AppMessageBanner message={message} className="mt-3" />
 
         <Tabs value={timelineTab} onValueChange={(value) => setTimelineTab(value as TimelineTab)} className="mt-3">
-            <TabsList variant="line" className="mx-auto max-w-md">
-              <TabsTrigger value="latest">最新</TabsTrigger>
-              <TabsTrigger value="following">フォロー中</TabsTrigger>
-              <TabsTrigger value="trending">人気</TabsTrigger>
-            </TabsList>
+          <TabsList variant="line" className="mx-auto max-w-md">
+            <TabsTrigger value="latest">最新</TabsTrigger>
+            <TabsTrigger value="following">フォロー中</TabsTrigger>
+            <TabsTrigger value="trending">人気</TabsTrigger>
+          </TabsList>
+
+          {guildFeatureEnabled ? (
+            <div className="mt-3 flex flex-wrap gap-2">
+              <Button asChild variant="outline" size="sm" className="gap-2">
+                <Link href="/guild">
+                  <PixelCodeSolid className="size-4" />
+                  ギルドを探す
+                </Link>
+              </Button>
+              {currentGuild ? (
+                <>
+                  <Button asChild variant="outline" size="sm">
+                    <Link href={`/guild/${currentGuild.name}`}>自分のギルド</Link>
+                  </Button>
+                  <Button asChild variant="outline" size="sm" className="gap-2">
+                    <Link href={`/guild/${currentGuild.name}/chat`}>
+                      <PixelMessageDotsSolid className="size-4" />
+                      チャット
+                    </Link>
+                  </Button>
+                </>
+              ) : user ? (
+                <Button asChild variant="outline" size="sm">
+                  <Link href="/guild">ギルドを作る</Link>
+                </Button>
+              ) : null}
+            </div>
+          ) : null}
 
           {(["latest", "following", "trending"] as const).map((tabValue) => (
             <TabsContent key={tabValue} value={tabValue}>
@@ -686,10 +778,11 @@ export default function Home() {
                           onReportPost={handleReportPost}
                           pendingLikePostId={pendingLikePostId}
                           pendingRepostPostId={pendingRepostPostId}
-                          pendingReactionKey={pendingReactionKey}
-                          repostCount={repostCountMap.get(post.id) ?? 0}
-                          adminUserIds={adminUserIds}
-                        />
+                  pendingReactionKey={pendingReactionKey}
+                  repostCount={repostCountMap.get(post.id) ?? 0}
+                  adminUserIds={adminUserIds}
+                  guildDisplayMap={guildDisplayMap}
+                />
                       </motion.div>
                     ))}
                   </AnimatePresence>

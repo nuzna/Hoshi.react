@@ -59,6 +59,8 @@ import {
   type ResolvedAchievement,
 } from "@/lib/achievements";
 import { fetchPublicAdminUserIds } from "@/lib/admin-users";
+import { guildFeatureEnabled } from "@/lib/guild-config";
+import { collectPostUserIds, fetchGuildDisplayMap, type GuildDisplay } from "@/lib/guilds";
 import {
   DISPLAY_FONT_OPTIONS,
   getDisplayFontLabel,
@@ -110,6 +112,7 @@ function UserPageContent() {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<ProfileDetail | null>(null);
   const [adminUserIds, setAdminUserIds] = useState<Set<string>>(new Set());
+  const [guildDisplayMap, setGuildDisplayMap] = useState<Map<string, GuildDisplay>>(new Map());
   const [posts, setPosts] = useState<TimelinePost[]>([]);
   const [likedPosts, setLikedPosts] = useState<TimelinePost[]>([]);
   const [activeFeed, setActiveFeed] = useState<"posts" | "likes">("posts");
@@ -160,6 +163,7 @@ function UserPageContent() {
   const visiblePostIdsRef = useRef<Set<string>>(new Set());
   const composerFileInputRef = useRef<HTMLInputElement | null>(null);
   const isOwnProfile = profile !== null && user?.id === profile.id;
+  const profileGuild = guildFeatureEnabled && profile ? guildDisplayMap.get(profile.id) : undefined;
 
   const fetchProfileAndPosts = useCallback(
     async (withLoading: boolean, viewerUserId?: string | null) => {
@@ -540,6 +544,21 @@ function UserPageContent() {
       void supabase.removeChannel(channel);
     };
   }, [fetchBlockState, fetchFollowLists, fetchFollowState, fetchProfileAndPosts, profile, slug, user?.id]);
+
+  useEffect(() => {
+    const supabase = getSupabaseBrowserClient();
+    const relatedPosts = [...posts, ...likedPosts].filter(Boolean) as TimelinePost[];
+    const userIds = profile ? [profile.id, ...collectPostUserIds(relatedPosts)] : collectPostUserIds(relatedPosts);
+
+    if (userIds.length === 0) {
+      setGuildDisplayMap(new Map());
+      return;
+    }
+
+    void fetchGuildDisplayMap(supabase, Array.from(new Set(userIds)))
+      .then((map) => setGuildDisplayMap(map))
+      .catch(() => setGuildDisplayMap(new Map()));
+  }, [likedPosts, posts, profile]);
 
   useEffect(() => {
     return () => {
@@ -1086,12 +1105,22 @@ function UserPageContent() {
                         name={profile.display_name}
                         font={profile.display_font}
                         isAdmin={adminUserIds.has(profile.id)}
+                        guildTag={profileGuild?.tag}
+                        guildSymbol={profileGuild?.symbol}
                         textClassName="font-semibold"
                       />
                     </p>
                     <p className="text-sm text-muted-foreground">
                       @{profile.username}
                     </p>
+                    {guildFeatureEnabled && profileGuild ? (
+                      <Link
+                        href={`/guild/${profileGuild.guildName}`}
+                        className="mt-1 inline-flex text-xs font-medium text-sky-600 hover:text-sky-700 dark:text-sky-300 dark:hover:text-sky-200"
+                      >
+                        /guild/{profileGuild.guildName}
+                      </Link>
+                    ) : null}
                   </div>
                 </div>
 
@@ -1245,6 +1274,13 @@ function UserPageContent() {
                     <DialogTrigger asChild>
                       <Button variant="outline">プロフィール編集</Button>
                     </DialogTrigger>
+                    {guildFeatureEnabled ? (
+                      <Button asChild variant="ghost">
+                        <Link href={profileGuild ? `/guild/${profileGuild.guildName}` : "/guild"}>
+                          {profileGuild ? "ギルド" : "ギルドを作る"}
+                        </Link>
+                      </Button>
+                    ) : null}
                     <Button asChild variant="ghost">
                       <Link href="/connections">接続</Link>
                     </Button>
@@ -1341,6 +1377,8 @@ function UserPageContent() {
                               name={editDisplayName || "表示名プレビュー"}
                               font={editDisplayFont}
                               isAdmin={adminUserIds.has(profile.id)}
+                              guildTag={profileGuild?.tag}
+                              guildSymbol={profileGuild?.symbol}
                               textClassName="font-medium"
                             />
                           </div>
@@ -1584,6 +1622,7 @@ function UserPageContent() {
                           pendingReactionKey={pendingReactionKey}
                           repostCount={repostCountMap.get(post.id) ?? 0}
                           adminUserIds={adminUserIds}
+                          guildDisplayMap={guildDisplayMap}
                         />
                     </motion.div>
                   ))}

@@ -38,6 +38,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { Textarea } from "@/components/ui/textarea"
 import { TwemojiEmoji, TwemojiText } from "@/components/twemoji-text"
+import type { GuildDisplay } from "@/lib/guilds"
 import { groupReactionCounts, pickSingleRelation, type TimelinePost } from "@/lib/post-types"
 import { Trash2Icon } from "lucide-react"
 
@@ -56,6 +57,7 @@ type PostCardProps = {
   pendingReactionKey: string | null
   repostCount: number
   adminUserIds?: Set<string>
+  guildDisplayMap?: Map<string, GuildDisplay>
 }
 
 const emojiPicker = [
@@ -117,6 +119,7 @@ export function PostCard({
   pendingReactionKey,
   repostCount,
   adminUserIds,
+  guildDisplayMap,
 }: PostCardProps) {
   const router = useRouter()
   const [deleteOpen, setDeleteOpen] = useState(false)
@@ -138,6 +141,7 @@ export function PostCard({
   const username = post.profiles?.username ?? "unknown-user"
   const displayFont = post.profiles?.display_font ?? "geist"
   const isAdmin = post.profiles?.id ? adminUserIds?.has(post.profiles.id) ?? false : false
+  const profileGuild = post.profiles?.id ? guildDisplayMap?.get(post.profiles.id) : undefined
   const replySource = pickSingleRelation(post.reply_to)
   const source = pickSingleRelation(post.repost_of)
   const isPureRepost = post.repost_of_id !== null && (post.content ?? "").trim() === ""
@@ -163,6 +167,8 @@ export function PostCard({
             name={displayName}
             font={displayFont}
             isAdmin={isAdmin}
+            guildTag={profileGuild?.tag}
+            guildSymbol={profileGuild?.symbol}
             textClassName="font-medium"
           />{" "}
           がリポストしました
@@ -190,6 +196,8 @@ export function PostCard({
                 name={displayName}
                 font={displayFont}
                 isAdmin={isAdmin}
+                guildTag={profileGuild?.tag}
+                guildSymbol={profileGuild?.symbol}
                 textClassName="font-medium"
               />
             </p>
@@ -260,6 +268,8 @@ export function PostCard({
                 name={source.profiles?.display_name ?? "名無し"}
                 font={source.profiles?.display_font}
                 isAdmin={source.profiles?.id ? adminUserIds?.has(source.profiles.id) ?? false : false}
+                guildTag={source.profiles?.id ? guildDisplayMap?.get(source.profiles.id)?.tag : undefined}
+                guildSymbol={source.profiles?.id ? guildDisplayMap?.get(source.profiles.id)?.symbol : undefined}
                 textClassName="font-medium"
               />{" "}
               さんの投稿の引用

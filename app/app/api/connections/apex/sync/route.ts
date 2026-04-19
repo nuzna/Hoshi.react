@@ -5,7 +5,7 @@ import { fetchApexTrackerProfile, type ApexTrackerPlatform } from "@/lib/apex-tr
 import { getSupabaseAuthedServerClient } from "@/lib/supabase/client"
 
 function isValidPlatform(value: string): value is ApexTrackerPlatform {
-  return value === "origin" || value === "psn" || value === "xbl"
+  return value === "PC" || value === "PS4" || value === "SWICH" || value === "X1"
 }
 
 export async function POST(request: Request) {

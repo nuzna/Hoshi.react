@@ -977,17 +977,7 @@ for delete
 to authenticated
 using (auth.uid() = follower_id and public.can_user_interact(auth.uid()));
 
--- Spotify integration was removed from the application.
-drop policy if exists "spotify_connections_select_own" on public.spotify_connections;
-drop policy if exists "spotify_presence_cache_select_public" on public.spotify_presence_cache;
-
-drop trigger if exists trg_spotify_connections_set_updated_at on public.spotify_connections;
-drop trigger if exists trg_spotify_presence_cache_set_updated_at on public.spotify_presence_cache;
-
-drop table if exists public.spotify_presence_cache;
-drop table if exists public.spotify_connections;
-
--- Apex Legends widget support via Tracker Network API.
+-- Apex Legends widget support via ALS API.
 create table if not exists public.apex_connections (
   user_id uuid primary key references public.profiles (id) on delete cascade,
   platform text not null,
@@ -1013,8 +1003,35 @@ create table if not exists public.apex_profile_cache (
   updated_at timestamptz not null default timezone('utc', now())
 );
 
+update public.apex_connections
+set platform = case platform
+  when 'origin' then 'PC'
+  when 'psn' then 'PS4'
+  when 'xbl' then 'X1'
+  else platform
+end
+where platform in ('origin', 'psn', 'xbl');
+
+update public.apex_profile_cache
+set platform = case platform
+  when 'origin' then 'PC'
+  when 'psn' then 'PS4'
+  when 'xbl' then 'X1'
+  else platform
+end
+where platform in ('origin', 'psn', 'xbl');
+
 do $$
 begin
+  if exists (
+    select 1
+    from pg_constraint
+    where conname = 'apex_connections_platform_check'
+      and conrelid = 'public.apex_connections'::regclass
+  ) then
+    alter table public.apex_connections drop constraint apex_connections_platform_check;
+  end if;
+
   if not exists (
     select 1
     from pg_constraint
@@ -1023,7 +1040,16 @@ begin
   ) then
     alter table public.apex_connections
       add constraint apex_connections_platform_check
-      check (platform in ('origin', 'psn', 'xbl'));
+      check (platform in ('PC', 'PS4', 'SWICH', 'X1'));
+  end if;
+
+  if exists (
+    select 1
+    from pg_constraint
+    where conname = 'apex_profile_cache_platform_check'
+      and conrelid = 'public.apex_profile_cache'::regclass
+  ) then
+    alter table public.apex_profile_cache drop constraint apex_profile_cache_platform_check;
   end if;
 
   if not exists (
@@ -1034,7 +1060,7 @@ begin
   ) then
     alter table public.apex_profile_cache
       add constraint apex_profile_cache_platform_check
-      check (platform in ('origin', 'psn', 'xbl'));
+      check (platform in ('PC', 'PS4', 'SWICH', 'X1'));
   end if;
 end
 $$;
@@ -1109,6 +1135,369 @@ for delete
 to authenticated
 using (auth.uid() = user_id);
 
+-- Guild support.
+create table if not exists public.guilds (
+  id uuid primary key default extensions.gen_random_uuid(),
+  name text not null,
+  tag text not null,
+  symbol text not null,
+  owner_id uuid not null references public.profiles (id) on delete cascade,
+  created_at timestamptz not null default timezone('utc', now()),
+  updated_at timestamptz not null default timezone('utc', now())
+);
+
+create table if not exists public.guild_members (
+  user_id uuid primary key references public.profiles (id) on delete cascade,
+  guild_id uuid not null references public.guilds (id) on delete cascade,
+  role text not null default 'member',
+  joined_at timestamptz not null default timezone('utc', now())
+);
+
+create table if not exists public.guild_join_requests (
+  id uuid primary key default extensions.gen_random_uuid(),
+  guild_id uuid not null references public.guilds (id) on delete cascade,
+  user_id uuid not null references public.profiles (id) on delete cascade,
+  status text not null default 'pending',
+  created_at timestamptz not null default timezone('utc', now()),
+  reviewed_at timestamptz,
+  reviewed_by uuid references public.profiles (id) on delete set null
+);
+
+create table if not exists public.guild_messages (
+  id uuid primary key default extensions.gen_random_uuid(),
+  guild_id uuid not null references public.guilds (id) on delete cascade,
+  user_id uuid not null references public.profiles (id) on delete cascade,
+  content text not null,
+  created_at timestamptz not null default timezone('utc', now())
+);
+
+do $$
+begin
+  if exists (
+    select 1
+    from pg_constraint
+    where conname = 'guilds_name_check'
+      and conrelid = 'public.guilds'::regclass
+  ) then
+    alter table public.guilds drop constraint guilds_name_check;
+  end if;
+
+  if exists (
+    select 1
+    from pg_constraint
+    where conname = 'guilds_tag_check'
+      and conrelid = 'public.guilds'::regclass
+  ) then
+    alter table public.guilds drop constraint guilds_tag_check;
+  end if;
+
+  if exists (
+    select 1
+    from pg_constraint
+    where conname = 'guilds_symbol_check'
+      and conrelid = 'public.guilds'::regclass
+  ) then
+    alter table public.guilds drop constraint guilds_symbol_check;
+  end if;
+
+  if exists (
+    select 1
+    from pg_constraint
+    where conname = 'guild_members_role_check'
+      and conrelid = 'public.guild_members'::regclass
+  ) then
+    alter table public.guild_members drop constraint guild_members_role_check;
+  end if;
+
+  if exists (
+    select 1
+    from pg_constraint
+    where conname = 'guild_join_requests_status_check'
+      and conrelid = 'public.guild_join_requests'::regclass
+  ) then
+    alter table public.guild_join_requests drop constraint guild_join_requests_status_check;
+  end if;
+
+  if exists (
+    select 1
+    from pg_constraint
+    where conname = 'guild_messages_content_check'
+      and conrelid = 'public.guild_messages'::regclass
+  ) then
+    alter table public.guild_messages drop constraint guild_messages_content_check;
+  end if;
+
+  alter table public.guilds
+    add constraint guilds_name_check check (name ~ '^[a-z0-9]+$'),
+    add constraint guilds_tag_check check (char_length(trim(tag)) between 1 and 5),
+    add constraint guilds_symbol_check check (char_length(trim(symbol)) between 1 and 2);
+
+  alter table public.guild_members
+    add constraint guild_members_role_check check (role in ('owner', 'admin', 'member'));
+
+  alter table public.guild_join_requests
+    add constraint guild_join_requests_status_check check (status in ('pending', 'approved', 'rejected'));
+
+  alter table public.guild_messages
+    add constraint guild_messages_content_check check (char_length(trim(content)) between 1 and 500);
+end
+$$;
+
+create unique index if not exists guilds_name_key on public.guilds (name);
+create index if not exists guilds_owner_id_idx on public.guilds (owner_id);
+create index if not exists guild_members_guild_id_idx on public.guild_members (guild_id, joined_at);
+create unique index if not exists guild_join_requests_pending_unique
+on public.guild_join_requests (guild_id, user_id)
+where status = 'pending';
+create index if not exists guild_join_requests_guild_id_status_idx
+on public.guild_join_requests (guild_id, status, created_at desc);
+create index if not exists guild_messages_guild_id_created_at_idx
+on public.guild_messages (guild_id, created_at asc);
+
+drop trigger if exists trg_guilds_set_updated_at on public.guilds;
+create trigger trg_guilds_set_updated_at
+before update on public.guilds
+for each row execute function public.set_updated_at();
+
+alter table public.guilds enable row level security;
+alter table public.guild_members enable row level security;
+alter table public.guild_join_requests enable row level security;
+alter table public.guild_messages enable row level security;
+
+create or replace function public.is_guild_manager(p_guild_id uuid, p_user_id uuid)
+returns boolean
+language sql
+security definer
+stable
+set search_path = public
+as $$
+  select exists (
+    select 1
+    from public.guild_members members
+    where members.guild_id = p_guild_id
+      and members.user_id = p_user_id
+      and members.role in ('owner', 'admin')
+  );
+$$;
+
+create or replace function public.create_guild(
+  p_name text,
+  p_tag text,
+  p_symbol text
+)
+returns text
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  current_user_id uuid := auth.uid();
+  normalized_name text := lower(trim(coalesce(p_name, '')));
+  normalized_tag text := trim(coalesce(p_tag, ''));
+  normalized_symbol text := trim(coalesce(p_symbol, ''));
+  current_profile public.profiles%rowtype;
+  created_guild_id uuid;
+begin
+  if current_user_id is null then
+    raise exception 'ログインが必要です';
+  end if;
+
+  select *
+  into current_profile
+  from public.profiles
+  where id = current_user_id;
+
+  if current_profile.id is null then
+    raise exception 'プロフィールが見つかりません';
+  end if;
+
+  if current_profile.created_at > timezone('utc', now()) - interval '7 days' then
+    raise exception '登録から7日経過するまでギルドは作成できません';
+  end if;
+
+  if exists (select 1 from public.guild_members where user_id = current_user_id) then
+    raise exception 'すでにギルドに加入しているため作成できません';
+  end if;
+
+  if normalized_name !~ '^[a-z0-9]+$' then
+    raise exception 'ギルド名は英数字のみで入力してください';
+  end if;
+
+  if char_length(normalized_tag) < 1 or char_length(normalized_tag) > 5 then
+    raise exception 'ギルドタグは5文字以内で入力してください';
+  end if;
+
+  if char_length(normalized_symbol) < 1 or char_length(normalized_symbol) > 2 then
+    raise exception '記号を選択してください';
+  end if;
+
+  insert into public.guilds (name, tag, symbol, owner_id)
+  values (normalized_name, normalized_tag, normalized_symbol, current_user_id)
+  returning id into created_guild_id;
+
+  insert into public.guild_members (user_id, guild_id, role)
+  values (current_user_id, created_guild_id, 'owner');
+
+  return normalized_name;
+exception
+  when unique_violation then
+    raise exception 'そのギルド名はすでに使用されています';
+end;
+$$;
+
+create or replace function public.request_join_guild(p_guild_id uuid)
+returns boolean
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  current_user_id uuid := auth.uid();
+begin
+  if current_user_id is null then
+    raise exception 'ログインが必要です';
+  end if;
+
+  if p_guild_id is null or not exists (select 1 from public.guilds where id = p_guild_id) then
+    raise exception 'ギルドが見つかりません';
+  end if;
+
+  if exists (select 1 from public.guild_members where user_id = current_user_id) then
+    raise exception 'すでにギルドに加入しています';
+  end if;
+
+  if exists (
+    select 1
+    from public.guild_join_requests
+    where guild_id = p_guild_id
+      and user_id = current_user_id
+      and status = 'pending'
+  ) then
+    raise exception '参加申請は送信済みです';
+  end if;
+
+  insert into public.guild_join_requests (guild_id, user_id)
+  values (p_guild_id, current_user_id);
+
+  return true;
+end;
+$$;
+
+create or replace function public.review_guild_join_request(
+  p_request_id uuid,
+  p_decision text
+)
+returns boolean
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  current_user_id uuid := auth.uid();
+  request_row public.guild_join_requests%rowtype;
+  normalized_decision text := lower(trim(coalesce(p_decision, '')));
+begin
+  if current_user_id is null then
+    raise exception 'ログインが必要です';
+  end if;
+
+  select *
+  into request_row
+  from public.guild_join_requests
+  where id = p_request_id;
+
+  if request_row.id is null then
+    raise exception '申請が見つかりません';
+  end if;
+
+  if not public.is_guild_manager(request_row.guild_id, current_user_id) then
+    raise exception 'この申請を処理する権限がありません';
+  end if;
+
+  if request_row.status <> 'pending' then
+    raise exception 'この申請はすでに処理されています';
+  end if;
+
+  if normalized_decision = 'approve' then
+    if exists (select 1 from public.guild_members where user_id = request_row.user_id) then
+      raise exception '申請者はすでに別のギルドに加入しています';
+    end if;
+
+    insert into public.guild_members (user_id, guild_id, role)
+    values (request_row.user_id, request_row.guild_id, 'member');
+
+    update public.guild_join_requests
+    set
+      status = 'approved',
+      reviewed_at = timezone('utc', now()),
+      reviewed_by = current_user_id
+    where id = p_request_id;
+  elsif normalized_decision = 'reject' then
+    update public.guild_join_requests
+    set
+      status = 'rejected',
+      reviewed_at = timezone('utc', now()),
+      reviewed_by = current_user_id
+    where id = p_request_id;
+  else
+    raise exception '不明な処理です';
+  end if;
+
+  return true;
+end;
+$$;
+
+drop policy if exists "guilds_select_public" on public.guilds;
+create policy "guilds_select_public"
+on public.guilds
+for select
+using (true);
+
+drop policy if exists "guild_members_select_public" on public.guild_members;
+create policy "guild_members_select_public"
+on public.guild_members
+for select
+using (true);
+
+drop policy if exists "guild_join_requests_select_self_or_manager" on public.guild_join_requests;
+create policy "guild_join_requests_select_self_or_manager"
+on public.guild_join_requests
+for select
+to authenticated
+using (
+  auth.uid() = user_id
+  or public.is_guild_manager(guild_id, auth.uid())
+);
+
+drop policy if exists "guild_messages_select_members" on public.guild_messages;
+create policy "guild_messages_select_members"
+on public.guild_messages
+for select
+to authenticated
+using (
+  exists (
+    select 1
+    from public.guild_members members
+    where members.guild_id = guild_messages.guild_id
+      and members.user_id = auth.uid()
+  )
+);
+
+drop policy if exists "guild_messages_insert_members" on public.guild_messages;
+create policy "guild_messages_insert_members"
+on public.guild_messages
+for insert
+to authenticated
+with check (
+  auth.uid() = user_id
+  and exists (
+    select 1
+    from public.guild_members members
+    where members.guild_id = guild_messages.guild_id
+      and members.user_id = auth.uid()
+  )
+);
+
 do $$
 begin
   if not exists (
@@ -1139,6 +1528,16 @@ begin
       and tablename = 'apex_profile_cache'
   ) then
     alter publication supabase_realtime add table public.apex_profile_cache;
+  end if;
+
+  if not exists (
+    select 1
+    from pg_publication_tables
+    where pubname = 'supabase_realtime'
+      and schemaname = 'public'
+      and tablename = 'guild_messages'
+  ) then
+    alter publication supabase_realtime add table public.guild_messages;
   end if;
 end
 $$;

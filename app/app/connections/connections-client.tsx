@@ -32,10 +32,11 @@ type ConnectionProfile = Pick<
 type ApexConnection = Database["public"]["Tables"]["apex_connections"]["Row"]
 type ApexProfileCache = Database["public"]["Tables"]["apex_profile_cache"]["Row"]
 
-const apexPlatformLabels: Record<"origin" | "psn" | "xbl", string> = {
-  origin: "PC / EA",
-  psn: "PlayStation",
-  xbl: "Xbox",
+const apexPlatformLabels: Record<"PC" | "PS4" | "SWICH" | "X1", string> = {
+  PC: "PC",
+  PS4: "PlayStation",
+  SWICH: "Nintendo Switch",
+  X1: "Xbox",
 }
 
 export function ConnectionsClient() {
@@ -47,7 +48,7 @@ export function ConnectionsClient() {
   const [isDisconnectingDiscord, setIsDisconnectingDiscord] = useState(false)
   const [apexConnection, setApexConnection] = useState<ApexConnection | null>(null)
   const [apexProfile, setApexProfile] = useState<ApexProfileCache | null>(null)
-  const [apexPlatform, setApexPlatform] = useState<"origin" | "psn" | "xbl">("origin")
+  const [apexPlatform, setApexPlatform] = useState<"PC" | "PS4" | "SWICH" | "X1">("PC")
   const [apexPlayerName, setApexPlayerName] = useState("")
   const [isSyncingApex, setIsSyncingApex] = useState(false)
   const [isDisconnectingApex, setIsDisconnectingApex] = useState(false)
@@ -101,10 +102,10 @@ export function ConnectionsClient() {
       setApexProfile(nextApexProfile)
 
       if (nextApexConnection) {
-        setApexPlatform((nextApexConnection.platform as "origin" | "psn" | "xbl") ?? "origin")
+        setApexPlatform((nextApexConnection.platform as "PC" | "PS4" | "SWICH" | "X1") ?? "PC")
         setApexPlayerName(nextApexConnection.player_name)
       } else {
-        setApexPlatform("origin")
+        setApexPlatform("PC")
         setApexPlayerName("")
       }
 
@@ -176,7 +177,7 @@ export function ConnectionsClient() {
       updated_at: new Date().toISOString(),
     })
     setApexProfile(payload as ApexProfileCache)
-    setApexPlatform((payload.platform as "origin" | "psn" | "xbl") ?? apexPlatform)
+    setApexPlatform((payload.platform as "PC" | "PS4" | "SWICH" | "X1") ?? apexPlatform)
     setApexPlayerName(payload.player_name ?? apexPlayerName.trim())
     setMessage(createSuccessMessage("Apex 情報を同期しました。"))
   }
@@ -205,7 +206,7 @@ export function ConnectionsClient() {
 
     setApexConnection(null)
     setApexProfile(null)
-    setApexPlatform("origin")
+    setApexPlatform("PC")
     setApexPlayerName("")
     setMessage(createSuccessMessage("Apex 接続を解除しました。"))
   }
@@ -348,11 +349,11 @@ export function ConnectionsClient() {
               <section className="rounded-3xl border border-border/80 p-4">
                 <div className="mb-3 flex items-start justify-between gap-3">
                   <div>
-                    <p className="text-sm font-semibold">Apex Legends</p>
-                    <p className="text-xs text-muted-foreground">
-                      `apex.tracker.gg` からレベル、ランク、レジェンド、戦績を同期してプロフィールに表示します。
-                    </p>
-                  </div>
+                  <p className="text-sm font-semibold">Apex Legends</p>
+                  <p className="text-xs text-muted-foreground">
+                      ALS からレベル、ランク、レジェンド、戦績を同期してプロフィールに表示します。
+                  </p>
+                </div>
                   <span className="rounded-full border border-border/70 px-2 py-1 text-xs">
                     {apexConnection ? "接続済み" : "未接続"}
                   </span>
@@ -367,14 +368,15 @@ export function ConnectionsClient() {
                 <div className="grid gap-3 sm:grid-cols-[180px_minmax(0,1fr)]">
                   <div className="space-y-2">
                     <p className="text-xs text-muted-foreground">プラットフォーム</p>
-                    <Select value={apexPlatform} onValueChange={(value) => setApexPlatform(value as "origin" | "psn" | "xbl")}>
+                    <Select value={apexPlatform} onValueChange={(value) => setApexPlatform(value as "PC" | "PS4" | "SWICH" | "X1")}>
                       <SelectTrigger>
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="origin">{apexPlatformLabels.origin}</SelectItem>
-                        <SelectItem value="psn">{apexPlatformLabels.psn}</SelectItem>
-                        <SelectItem value="xbl">{apexPlatformLabels.xbl}</SelectItem>
+                        <SelectItem value="PC">{apexPlatformLabels.PC}</SelectItem>
+                        <SelectItem value="PS4">{apexPlatformLabels.PS4}</SelectItem>
+                        <SelectItem value="SWICH">{apexPlatformLabels.SWICH}</SelectItem>
+                        <SelectItem value="X1">{apexPlatformLabels.X1}</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -384,7 +386,7 @@ export function ConnectionsClient() {
                     <Input
                       value={apexPlayerName}
                       onChange={(event) => setApexPlayerName(event.target.value)}
-                      placeholder={apexPlatform === "origin" ? "EA / Origin のプレイヤー名" : "Tracker に表示されるプレイヤー名"}
+                      placeholder={apexPlatform === "PC" ? "PC のプレイヤー名" : "ALS に表示されるプレイヤー名"}
                     />
                   </div>
                 </div>

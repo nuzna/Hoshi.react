@@ -19,6 +19,7 @@ import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Textarea } from "@/components/ui/textarea"
 import { fetchPublicAdminUserIds } from "@/lib/admin-users"
+import { collectPostUserIds, fetchGuildDisplayMap, type GuildDisplay } from "@/lib/guilds"
 import { deletePostWithMedia } from "@/lib/post-delete"
 import {
   preparePostImageSelection,
@@ -36,6 +37,7 @@ function PostDetailContent() {
 
   const [user, setUser] = useState<User | null>(null)
   const [adminUserIds, setAdminUserIds] = useState<Set<string>>(new Set())
+  const [guildDisplayMap, setGuildDisplayMap] = useState<Map<string, GuildDisplay>>(new Map())
   const [post, setPost] = useState<TimelinePost | null>(null)
   const [replySourcePost, setReplySourcePost] = useState<TimelinePost | null>(null)
   const [replies, setReplies] = useState<TimelinePost[]>([])
@@ -71,8 +73,8 @@ function PostDetailContent() {
     }
 
     const basePost = (data ?? null) as TimelinePost | null
-    if (basePost) {
-      const rowsToHydrate: TimelinePost[] = [basePost]
+      if (basePost) {
+        const rowsToHydrate: TimelinePost[] = [basePost]
 
       if (basePost.reply_to_id) {
         const { data: replySourceData } = await supabase
@@ -86,13 +88,13 @@ function PostDetailContent() {
         }
       }
 
-      const [hydrated, hydratedReplySource] = await hydratePostsRelations(supabase, rowsToHydrate)
-      setPost(hydrated ?? null)
-      setReplySourcePost(hydratedReplySource ?? null)
-    } else {
-      setPost(null)
-      setReplySourcePost(null)
-    }
+        const [hydrated, hydratedReplySource] = await hydratePostsRelations(supabase, rowsToHydrate)
+        setPost(hydrated ?? null)
+        setReplySourcePost(hydratedReplySource ?? null)
+      } else {
+        setPost(null)
+        setReplySourcePost(null)
+      }
 
     if (!data) {
       setRepostCount(0)
@@ -155,6 +157,20 @@ function PostDetailContent() {
     }
     setReplyRepostCounts(counts)
   }, [postId])
+
+  useEffect(() => {
+    const supabase = getSupabaseBrowserClient()
+    const relatedPosts = [post, replySourcePost, ...replies].filter(Boolean) as TimelinePost[]
+
+    if (relatedPosts.length === 0) {
+      setGuildDisplayMap(new Map())
+      return
+    }
+
+    void fetchGuildDisplayMap(supabase, collectPostUserIds(relatedPosts))
+      .then((map) => setGuildDisplayMap(map))
+      .catch(() => setGuildDisplayMap(new Map()))
+  }, [post, replySourcePost, replies])
 
   useEffect(() => {
     const supabase = getSupabaseBrowserClient()
@@ -542,6 +558,7 @@ function PostDetailContent() {
                 pendingReactionKey={pendingReactionKey}
                 repostCount={repostCount}
                 adminUserIds={adminUserIds}
+                guildDisplayMap={guildDisplayMap}
               />
             </section>
 
@@ -577,10 +594,11 @@ function PostDetailContent() {
                       onReportPost={handleReportPost}
                       pendingLikePostId={pendingLikePostId}
                       pendingRepostPostId={pendingRepostPostId}
-                      pendingReactionKey={pendingReactionKey}
-                      repostCount={replyRepostCounts[reply.id] ?? 0}
-                      adminUserIds={adminUserIds}
-                    />
+                    pendingReactionKey={pendingReactionKey}
+                    repostCount={replyRepostCounts[reply.id] ?? 0}
+                    adminUserIds={adminUserIds}
+                    guildDisplayMap={guildDisplayMap}
+                  />
                   ))
                 )}
               </div>

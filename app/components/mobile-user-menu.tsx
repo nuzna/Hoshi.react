@@ -1,8 +1,8 @@
-"use client"
+﻿"use client"
 
 import Link from "next/link"
 
-import { Link2, LogOut, Menu, Moon, Sun, UserCircle2 } from "lucide-react"
+import { Link2, LogOut, Menu, Moon, Shield, Sun, UserCircle2, Users } from "lucide-react"
 import { useTheme } from "next-themes"
 
 import { Button } from "@/components/ui/button"
@@ -14,6 +14,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import { guildFeatureEnabled } from "@/lib/guild-config"
 
 type MobileUserMenuProps = {
   profileUsername: string | null
@@ -41,6 +42,14 @@ export function MobileUserMenu({ profileUsername, onSignOut }: MobileUserMenuPro
             </Link>
           </DropdownMenuItem>
         ) : null}
+        {guildFeatureEnabled ? (
+          <DropdownMenuItem asChild>
+            <Link href="/guild">
+              <Users className="size-4" />
+              ギルド
+            </Link>
+          </DropdownMenuItem>
+        ) : null}
         <DropdownMenuItem asChild>
           <Link href="/connections">
             <Link2 className="size-4" />
@@ -55,7 +64,10 @@ export function MobileUserMenu({ profileUsername, onSignOut }: MobileUserMenuPro
           <Moon className="size-4" />
           ダーク
         </DropdownMenuItem>
-        <DropdownMenuItem onClick={() => setTheme("system")}>システム</DropdownMenuItem>
+        <DropdownMenuItem onClick={() => setTheme("system")}>
+          <Shield className="size-4" />
+          システム
+        </DropdownMenuItem>
         <DropdownMenuSeparator />
         <DropdownMenuItem onClick={onSignOut}>
           <LogOut className="size-4" />

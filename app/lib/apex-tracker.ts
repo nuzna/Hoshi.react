@@ -1,45 +1,42 @@
-type TrackerApiStat = {
-  displayValue?: string
+type ApexTrackerValue = {
   value?: number
-  metadata?: {
-    iconUrl?: string
-    rankName?: string
-  }
 }
 
-type TrackerApiSegment = {
-  type?: string
-  metadata?: {
+type ApexTrackerLegend = {
+  LegendName?: string
+  data?: Array<{
+    key?: string
     name?: string
-    imageUrl?: string
-    portraitImageUrl?: string
-    legendName?: string
-    isActive?: boolean
-  }
-  stats?: Record<string, TrackerApiStat | undefined>
-}
-
-type TrackerApiResponse = {
-  data?: {
-    platformInfo?: {
-      avatarUrl?: string
-      platformUserHandle?: string
-      platformUserIdentifier?: string
-      platformUserUrl?: string
-    }
-    metadata?: {
-      activeLegendName?: string
-      activeLegendImageUrl?: string
-    }
-    segments?: TrackerApiSegment[]
-  }
-  errors?: Array<{
-    code?: string
-    message?: string
+    value?: number
   }>
+  ImgAssets?: {
+    icon?: string
+    banner?: string
+  }
 }
 
-export type ApexTrackerPlatform = "origin" | "psn" | "xbl"
+type ApexLegendsStatusResponse = {
+  Error?: string
+  global?: {
+    name?: string
+    avatar?: string
+    level?: number
+    rank?: {
+      rankName?: string
+      rankScore?: number
+      rankImg?: string
+    }
+  }
+  total?: {
+    kills?: ApexTrackerValue
+    damage?: ApexTrackerValue
+  }
+  legends?: {
+    selected?: ApexTrackerLegend
+  }
+}
+
+export type ApexTrackerPlatform = "PC" | "PS4" | "SWICH" | "X1"
 
 export type ApexTrackerSnapshot = {
   platform: ApexTrackerPlatform
@@ -56,86 +53,91 @@ export type ApexTrackerSnapshot = {
   damage: number | null
 }
 
-function getTrackerApiKey() {
-  const apiKey = process.env.TRN_API_KEY
+function getAlsApiKey() {
+  const apiKey = process.env.ALS_API_KEY
   if (!apiKey) {
-    throw new Error("TRN_API_KEY が設定されていません。")
+    throw new Error("ALS_API_KEY が設定されていません。")
   }
   return apiKey
 }
 
-function readStatValue(segment: TrackerApiSegment | null, key: string) {
-  const stat = segment?.stats?.[key]
-  if (!stat) return null
-  return typeof stat.value === "number" ? Math.round(stat.value) : null
+function getLegendStatValue(legend: ApexTrackerLegend | undefined, keys: string[]) {
+  const items = Array.isArray(legend?.data) ? legend.data : []
+  for (const item of items) {
+    if (!item) continue
+    const loweredName = item.name?.toLowerCase()
+    if ((item.key && keys.includes(item.key)) || (loweredName && keys.includes(loweredName))) {
+      return typeof item.value === "number" ? Math.round(item.value) : null
+    }
+  }
+  return null
 }
 
-function parseTrackerError(response: Response, payload: TrackerApiResponse | null) {
-  const message = payload?.errors?.[0]?.message
-  if (response.status === 404) {
+function parseAlsError(status: number, payload: ApexLegendsStatusResponse | null, rawText: string) {
+  const message = payload?.Error ?? rawText.trim()
+  if (status === 403) {
+    return message || "API の認証に失敗しました。API キーを確認してください。"
+  }
+  if (status === 404) {
     return "Apex のプロフィールが見つかりません。プラットフォームとプレイヤー名を確認してください。"
   }
-  if (response.status === 401 || response.status === 403) {
-    return message ?? "Tracker Network API の認証に失敗しました。API キーや利用権限を確認してください。"
+  if (status === 406) {
+    return message || "API がこのリクエストを受け付けませんでした。URL や player/platform の組み合わせを確認してください。"
   }
-  return message ?? `Tracker Network API が ${response.status} を返しました。`
+  if (status === 410) {
+    return "API がプラットフォームを受け付けませんでした。"
+  }
+  if (status === 429) {
+    return "API のレート制限に達しました。少し時間を置いて再試行してください。"
+  }
+  return message || `API が ${status} を返しました。`
 }
 
 export async function fetchApexTrackerProfile(platform: ApexTrackerPlatform, playerName: string) {
-  const apiKey = getTrackerApiKey()
+  const apiKey = getAlsApiKey()
   const encodedPlayerName = encodeURIComponent(playerName)
-  const response = await fetch(`https://public-api.tracker.gg/v2/apex/standard/profile/${platform}/${encodedPlayerName}`, {
-    headers: {
-      Accept: "application/json",
-      "TRN-Api-Key": apiKey,
-    },
+  const url = `https://api.mozambiquehe.re/bridge?auth=${encodeURIComponent(apiKey)}&player=${encodedPlayerName}&platform=${platform}`
+
+  const response = await fetch(url, {
     cache: "no-store",
   })
 
-  const payload = (await response.json().catch(() => null)) as TrackerApiResponse | null
+  const rawText = await response.text()
+  let payload: ApexLegendsStatusResponse | null = null
+  if (rawText) {
+    try {
+      payload = JSON.parse(rawText) as ApexLegendsStatusResponse
+    } catch {
+      payload = null
+    }
+  }
+
   if (!response.ok) {
-    throw new Error(parseTrackerError(response, payload))
+    throw new Error(parseAlsError(response.status, payload, rawText))
   }
 
-  const data = payload?.data
-  if (!data) {
-    throw new Error("Tracker Network API から Apex データを取得できませんでした。")
+  if (!payload?.global) {
+    throw new Error("API から Apex データを取得できませんでした。")
   }
 
-  const segments = Array.isArray(data.segments) ? data.segments : []
-  const overviewSegment = segments[0] ?? null
-  const activeLegendSegment =
-    segments.find((segment) => segment.type === "legend" && segment.metadata?.isActive) ??
-    segments.find((segment) => segment.type === "legend")
-
-  const rankStat = overviewSegment?.stats?.rankScore
+  const selectedLegend = payload.legends?.selected
 
   return {
     platform,
-    playerName: data.platformInfo?.platformUserHandle ?? data.platformInfo?.platformUserIdentifier ?? playerName,
-    trackerUrl:
-      data.platformInfo?.platformUserUrl ??
-      `https://tracker.gg/apex/profile/${platform}/${encodedPlayerName}/overview`,
-    avatarUrl: data.platformInfo?.avatarUrl ?? null,
-    level: readStatValue(overviewSegment, "level"),
-    rankName:
-      rankStat?.metadata?.rankName ??
-      overviewSegment?.stats?.rankName?.displayValue ??
-      overviewSegment?.stats?.rankName?.metadata?.rankName ??
-      null,
-    rankScore: typeof rankStat?.value === "number" ? Math.round(rankStat.value) : null,
-    rankIconUrl: rankStat?.metadata?.iconUrl ?? null,
-    selectedLegend:
-      data.metadata?.activeLegendName ??
-      activeLegendSegment?.metadata?.legendName ??
-      activeLegendSegment?.metadata?.name ??
-      null,
-    selectedLegendImageUrl:
-      data.metadata?.activeLegendImageUrl ??
-      activeLegendSegment?.metadata?.imageUrl ??
-      activeLegendSegment?.metadata?.portraitImageUrl ??
-      null,
-    kills: readStatValue(overviewSegment, "kills"),
-    damage: readStatValue(overviewSegment, "damage"),
+    playerName: payload.global.name ?? playerName,
+    trackerUrl: `https://apexlegendsstatus.com/profile/${platform}/${encodedPlayerName}`,
+    avatarUrl: payload.global.avatar ?? null,
+    level: typeof payload.global.level === "number" ? Math.round(payload.global.level) : null,
+    rankName: payload.global.rank?.rankName ?? null,
+    rankScore: typeof payload.global.rank?.rankScore === "number" ? Math.round(payload.global.rank.rankScore) : null,
+    rankIconUrl: payload.global.rank?.rankImg ?? null,
+    selectedLegend: selectedLegend?.LegendName ?? null,
+    selectedLegendImageUrl: selectedLegend?.ImgAssets?.banner ?? selectedLegend?.ImgAssets?.icon ?? null,
+    kills:
+      getLegendStatValue(selectedLegend, ["kills"]) ??
+      (typeof payload.total?.kills?.value === "number" ? Math.round(payload.total.kills.value) : null),
+    damage:
+      getLegendStatValue(selectedLegend, ["damage"]) ??
+      (typeof payload.total?.damage?.value === "number" ? Math.round(payload.total.damage.value) : null),
   } satisfies ApexTrackerSnapshot
 }

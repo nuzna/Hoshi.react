@@ -15,9 +15,10 @@ function formatNumber(value: number | null) {
 }
 
 const platformLabels: Record<string, string> = {
-  origin: "PC / EA",
-  psn: "PlayStation",
-  xbl: "Xbox",
+  PC: "PC",
+  PS4: "PlayStation",
+  SWICH: "Nintendo Switch",
+  X1: "Xbox",
 }
 
 export function ApexWidget({ profile, compact = false }: ApexWidgetProps) {
